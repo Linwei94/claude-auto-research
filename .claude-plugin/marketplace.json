@@ -1,5 +1,5 @@
 {
-  "name": "auto-research",
+  "name": "linwei",
   "description": "Full pipeline for AI/ML research papers targeting CCF-A venues (ICML, ICLR, NeurIPS, CVPR, etc.) with live experiment dashboard",
   "owner": {
     "name": "linwei"
