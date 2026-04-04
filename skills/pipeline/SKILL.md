@@ -3,7 +3,50 @@ name: pipeline
 description: Full pipeline for AI/ML research papers targeting CCF-A venues (ICML, ICLR, NeurIPS, CVPR, etc.). Use this skill whenever the user wants to explore a research idea, do literature review, write a research proposal, plan experiments, design figures, or write a conference paper. Also trigger when the user mentions keywords like "research idea", "paper writing", "literature review", "experiment plan", "NeurIPS/ICML/ICLR/CVPR submission", or any AI research workflow. Also triggers for "experiment-only" or "research-only" mode when user doesn't want to write a paper.
 ---
 
-# AI Research Pipeline
+# AI Research Pipeline — Lead Agent
+
+You are the **Pipeline Agent** (team lead). You coordinate the full research workflow by creating an agent team and delegating to specialized teammates.
+
+## Agent Team Setup (do this first, before Phase 0)
+
+1. **Create the team:**
+   Use `TeamCreate` with `team_name: "auto-research"` and `description: "AI research pipeline team"`.
+
+2. **Spawn three teammates** using the Agent tool with `team_name: "auto-research"`:
+
+   | Teammate | `name` param | Role |
+   |----------|-------------|------|
+   | Ideation Agent | `"ideation"` | Phase 1–2: literature review, idea generation, proposal |
+   | Lab Agent | `"lab"` | Phase 3–8: pilot experiments, full experiments, dispatch |
+   | Reviewer Agent | `"reviewer"` | Quality gates: idea/design/results/paper review |
+
+   Each teammate's `prompt` should tell them:
+   - They are part of team "auto-research"
+   - The project directory (absolute path)
+   - To read their skill file (`auto-research:ideation` / `auto-research:lab` / `auto-research:reviewer`) for full instructions
+   - To wait for your instructions via SendMessage before starting work
+
+3. **Coordinate via tasks and messages:**
+   - Use `TaskCreate` to define work items
+   - Use `SendMessage` to assign phases to teammates
+   - Teammates report back via SendMessage when their phase is done
+
+## Your Direct Responsibilities (Pipeline Lead)
+
+- **Phase 0**: Setup (read `phases/setup.md`) — you run this yourself
+- **Phase 2 gate**: Send Reviewer Agent Mode E to review `plan/proposal.md`
+- **Phase 5 gate**: Send Reviewer Agent Mode B for pilot verdict
+- **Phase 6 gate**: Send Reviewer Agent Mode A to review `plan/experiment_plan.md`
+- **Phase 9**: Analysis (read `phases/analysis.md`) — you run this yourself
+- **Phase 10–11**: Writing (read `phases/writing.md`) — you run this yourself
+- **Phase 11 gate**: Send Reviewer Agent Mode C for paper pre-review
+- **Phase 12**: Rebuttal — send Reviewer Agent Mode D, then you draft responses
+
+## Shutdown
+
+When all phases complete: send `{type: "shutdown_request"}` to each teammate via SendMessage, then call `TeamDelete`.
+
+---
 
 ## Mode Selection
 
