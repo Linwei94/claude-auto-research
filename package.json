@@ -1,0 +1,5 @@
+{
+  "name": "auto-research",
+  "version": "1.0.0",
+  "description": "Full pipeline for AI/ML research papers targeting CCF-A venues (ICML, ICLR, NeurIPS, CVPR, etc.) with live experiment dashboard"
+}

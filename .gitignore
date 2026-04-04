@@ -1,0 +1,13 @@
+# Plugin runtime files
+.orphaned_at
+
+# Brainstorming session files
+**/.superpowers/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Local Claude settings (user-specific)
+**/.claude/ralph-loop.local.md

@@ -1,0 +1,9 @@
+{
+  "name": "auto-research",
+  "description": "Full pipeline for AI/ML research papers (CCF-A venues) with live experiment dashboard. Covers Phase 0–12: setup, ideation, pilot, experiments, analysis, writing, rebuttal.",
+  "version": "1.0.0",
+  "author": {
+    "name": "linwei"
+  },
+  "license": "MIT"
+}

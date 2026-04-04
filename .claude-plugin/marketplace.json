@@ -1,0 +1,17 @@
+{
+  "name": "auto-research",
+  "description": "Full pipeline for AI/ML research papers targeting CCF-A venues (ICML, ICLR, NeurIPS, CVPR, etc.) with live experiment dashboard",
+  "owner": {
+    "name": "linwei"
+  },
+  "plugins": [
+    {
+      "name": "auto-research",
+      "description": "Full pipeline for AI/ML research papers (CCF-A venues) with live experiment dashboard. Covers Phase 0–12: setup, ideation, pilot, experiments, analysis, writing, rebuttal.",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/Linwei94/claude-auto-research.git"
+      }
+    }
+  ]
+}

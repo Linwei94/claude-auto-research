@@ -1,0 +1,1598 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Auto-Research + Dashboard — 使用手册</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg2: #161b22;
+    --bg3: #1f2937;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-dim: #8b949e;
+    --blue: #58a6ff;
+    --green: #3fb950;
+    --orange: #f0883e;
+    --purple: #bc8cff;
+    --red: #f85149;
+    --cyan: #39d353;
+    --yellow: #d29922;
+    --accent: #1f6feb;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    line-height: 1.6;
+    font-size: 15px;
+  }
+
+  /* ── Hero ── */
+  .hero {
+    background: linear-gradient(135deg, #0d1117 0%, #0f1f3d 50%, #0d1117 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 80px 40px 60px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(31,111,235,0.15) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero-badge {
+    display: inline-block;
+    background: rgba(31,111,235,0.15);
+    border: 1px solid rgba(88,166,255,0.3);
+    color: var(--blue);
+    border-radius: 20px;
+    padding: 4px 14px;
+    font-size: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 20px;
+    font-weight: 600;
+  }
+  .hero h1 {
+    font-size: clamp(28px, 5vw, 52px);
+    font-weight: 800;
+    line-height: 1.15;
+    margin-bottom: 20px;
+    background: linear-gradient(135deg, #e6edf3 0%, #58a6ff 50%, #bc8cff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .hero p {
+    font-size: 17px;
+    color: var(--text-dim);
+    max-width: 620px;
+    margin: 0 auto 32px;
+  }
+  .hero-btns {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 22px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: all 0.2s;
+    cursor: pointer;
+    border: none;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .btn-primary:hover { background: #388bfd; transform: translateY(-1px); }
+  .btn-outline {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-outline:hover { border-color: var(--blue); color: var(--blue); }
+
+  /* ── Floating particles ── */
+  .particles {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+  }
+  .particle {
+    position: absolute;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: var(--blue);
+    opacity: 0;
+    animation: float-up var(--dur, 8s) var(--delay, 0s) infinite;
+  }
+  @keyframes float-up {
+    0% { opacity: 0; transform: translateY(0) scale(0.5); }
+    10% { opacity: 0.6; }
+    90% { opacity: 0.2; }
+    100% { opacity: 0; transform: translateY(-300px) scale(1.2); }
+  }
+
+  /* ── Layout ── */
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+  section { padding: 60px 0; border-bottom: 1px solid var(--border); }
+  section:last-child { border-bottom: none; }
+
+  /* ── Section headers ── */
+  .section-label {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--blue);
+    margin-bottom: 10px;
+  }
+  h2 {
+    font-size: 30px;
+    font-weight: 700;
+    margin-bottom: 10px;
+  }
+  h3 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: var(--text);
+  }
+  .section-desc {
+    color: var(--text-dim);
+    font-size: 15px;
+    max-width: 600px;
+    margin-bottom: 40px;
+  }
+
+  /* ── Pipeline diagram ── */
+  .pipeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    max-width: 800px;
+    margin: 0 auto;
+  }
+  .pipe-row {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    opacity: 0;
+    transform: translateX(-20px);
+    transition: all 0.5s ease;
+  }
+  .pipe-row.visible {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  .pipe-phase {
+    width: 90px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 16px;
+    font-size: 11px;
+    color: var(--text-dim);
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+  .pipe-line-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 32px;
+    flex-shrink: 0;
+  }
+  .pipe-dot {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    background: var(--bg2);
+    flex-shrink: 0;
+    transition: all 0.3s;
+    margin-top: 18px;
+  }
+  .pipe-dot.active { border-color: var(--blue); background: var(--accent); box-shadow: 0 0 12px rgba(88,166,255,0.5); }
+  .pipe-dot.done { border-color: var(--green); background: var(--green); }
+  .pipe-connector {
+    flex: 1;
+    width: 2px;
+    background: var(--border);
+    min-height: 10px;
+  }
+  .pipe-card {
+    flex: 1;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin: 6px 0;
+    transition: all 0.3s;
+    cursor: default;
+  }
+  .pipe-card:hover {
+    border-color: var(--blue);
+    background: var(--bg3);
+    transform: translateX(4px);
+  }
+  .pipe-card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 4px;
+  }
+  .pipe-card-title {
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .pipe-card-desc {
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.5;
+  }
+  .tag {
+    display: inline-block;
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .tag-blue { background: rgba(88,166,255,0.15); color: var(--blue); }
+  .tag-green { background: rgba(63,185,80,0.15); color: var(--green); }
+  .tag-orange { background: rgba(240,136,62,0.15); color: var(--orange); }
+  .tag-purple { background: rgba(188,140,255,0.15); color: var(--purple); }
+  .tag-red { background: rgba(248,81,73,0.15); color: var(--red); }
+  .tag-cyan { background: rgba(57,211,83,0.15); color: var(--cyan); }
+
+  /* ── Feature cards ── */
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+  }
+  .feature-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px;
+    transition: all 0.3s;
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  .feature-card.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .feature-card:hover {
+    border-color: var(--blue);
+    background: var(--bg3);
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+  }
+  .feature-icon {
+    font-size: 28px;
+    margin-bottom: 12px;
+    display: block;
+  }
+  .feature-card h3 { font-size: 15px; margin-bottom: 8px; }
+  .feature-card p { font-size: 13px; color: var(--text-dim); line-height: 1.6; }
+
+  /* ── Code blocks ── */
+  .code-wrap {
+    background: #010409;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 16px 0;
+  }
+  .code-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+  }
+  .code-dots { display: flex; gap: 6px; }
+  .code-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+  }
+  .code-lang {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .copy-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+  }
+  .copy-btn:hover { border-color: var(--blue); color: var(--blue); }
+  .copy-btn.copied { border-color: var(--green); color: var(--green); }
+  pre {
+    padding: 16px 20px;
+    overflow-x: auto;
+    font-family: 'SF Mono', 'Fira Code', 'Fira Mono', monospace;
+    font-size: 13px;
+    line-height: 1.7;
+  }
+  .k { color: #ff7b72; }     /* keyword */
+  .s { color: #a5d6ff; }     /* string */
+  .c { color: #8b949e; }     /* comment */
+  .f { color: #d2a8ff; }     /* function */
+  .n { color: #79c0ff; }     /* name/var */
+  .v { color: #e6edf3; }     /* value */
+  .m { color: #f0883e; }     /* method call */
+  .bash-prompt { color: #3fb950; }
+  .bash-cmd { color: #e6edf3; }
+
+  /* ── Dashboard preview ── */
+  .dashboard-preview {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  }
+  .db-titlebar {
+    background: var(--bg3);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .db-dots { display: flex; gap: 6px; }
+  .db-url {
+    flex: 1;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: var(--text-dim);
+    font-family: monospace;
+  }
+  .db-layout {
+    display: flex;
+    height: 340px;
+  }
+  .db-sidebar {
+    width: 180px;
+    flex-shrink: 0;
+    background: #0d1117;
+    border-right: 1px solid var(--border);
+    padding: 16px;
+  }
+  .db-sidebar-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+  }
+  .db-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 2px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .db-nav-item.active {
+    background: rgba(88,166,255,0.1);
+    color: var(--blue);
+  }
+  .db-stats {
+    margin-top: 20px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .db-stat { margin-bottom: 8px; }
+  .db-stat-label { font-size: 10px; color: var(--text-dim); }
+  .db-stat-val {
+    font-size: 20px;
+    font-weight: 700;
+  }
+  .db-main {
+    flex: 1;
+    overflow: hidden;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .db-table {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 11px;
+    flex: 1;
+  }
+  .db-table-head {
+    background: var(--bg3);
+    padding: 8px 12px;
+    display: grid;
+    grid-template-columns: 140px 1fr 1fr 1fr 80px;
+    gap: 8px;
+    color: var(--text-dim);
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+  }
+  .db-table-row {
+    padding: 8px 12px;
+    display: grid;
+    grid-template-columns: 140px 1fr 1fr 1fr 80px;
+    gap: 8px;
+    border-bottom: 1px solid var(--border);
+    align-items: center;
+    animation: row-in 0.4s ease both;
+  }
+  .db-table-row:last-child { border-bottom: none; }
+  @keyframes row-in {
+    from { opacity: 0; transform: translateX(-8px); }
+    to { opacity: 1; transform: none; }
+  }
+  .db-badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .db-badge-run { background: rgba(88,166,255,0.15); color: var(--blue); }
+  .db-badge-done { background: rgba(63,185,80,0.15); color: var(--green); }
+  .db-badge-pend { background: rgba(139,148,158,0.15); color: var(--text-dim); }
+  .db-pulse {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--blue);
+    box-shadow: 0 0 0 0 rgba(88,166,255,0.7);
+    animation: pulse 1.5s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(88,166,255,0.7); }
+    70% { box-shadow: 0 0 0 8px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+  .db-metric { color: var(--green); font-weight: 600; }
+  .db-metric-dim { color: var(--text-dim); }
+
+  /* ── Tabs ── */
+  .tabs { display: flex; gap: 4px; margin-bottom: 24px; flex-wrap: wrap; }
+  .tab {
+    padding: 7px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-dim);
+    transition: all 0.2s;
+    font-family: inherit;
+  }
+  .tab.active {
+    background: var(--bg3);
+    border-color: var(--blue);
+    color: var(--text);
+  }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* ── Two-col layout ── */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  @media (max-width: 720px) { .two-col { grid-template-columns: 1fr; } }
+
+  /* ── Callout ── */
+  .callout {
+    border-left: 3px solid var(--blue);
+    background: rgba(88,166,255,0.06);
+    padding: 14px 18px;
+    border-radius: 0 8px 8px 0;
+    margin: 16px 0;
+    font-size: 13px;
+  }
+  .callout.warn { border-color: var(--orange); background: rgba(240,136,62,0.06); }
+  .callout.success { border-color: var(--green); background: rgba(63,185,80,0.06); }
+  .callout strong { color: var(--text); }
+
+  /* ── TOC ── */
+  .toc {
+    position: sticky;
+    top: 20px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    font-size: 13px;
+  }
+  .toc-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+  }
+  .toc a {
+    display: block;
+    color: var(--text-dim);
+    text-decoration: none;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.2s;
+    margin-bottom: 2px;
+  }
+  .toc a:hover { color: var(--blue); background: rgba(88,166,255,0.08); }
+  .toc a.sub { padding-left: 20px; font-size: 12px; }
+
+  /* ── Main with TOC layout ── */
+  .page-layout {
+    display: grid;
+    grid-template-columns: 1fr 220px;
+    gap: 40px;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 24px;
+    align-items: start;
+  }
+  @media (max-width: 960px) {
+    .page-layout { grid-template-columns: 1fr; }
+    .toc { display: none; }
+  }
+
+  /* ── Architecture diagram ── */
+  .arch-diagram {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    flex-wrap: wrap;
+    margin: 30px 0;
+  }
+  .arch-box {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    text-align: center;
+    transition: all 0.3s;
+    min-width: 100px;
+  }
+  .arch-box:hover { border-color: var(--blue); transform: translateY(-3px); }
+  .arch-box .icon { font-size: 24px; margin-bottom: 6px; }
+  .arch-box .label { font-size: 11px; color: var(--text-dim); }
+  .arch-box .name { font-size: 13px; font-weight: 600; }
+  .arch-arrow {
+    font-size: 20px;
+    color: var(--text-dim);
+    padding: 0 8px;
+    display: flex;
+    align-items: center;
+  }
+
+  /* ── Animated counter ── */
+  .stat-row {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin: 30px 0;
+  }
+  .stat-item {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 22px;
+    flex: 1;
+    min-width: 120px;
+    text-align: center;
+  }
+  .stat-num {
+    font-size: 32px;
+    font-weight: 800;
+    color: var(--blue);
+    display: block;
+    line-height: 1.2;
+  }
+  .stat-label {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  /* ── Footer ── */
+  footer {
+    background: var(--bg2);
+    border-top: 1px solid var(--border);
+    padding: 32px 24px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+  /* ── Gradient text ── */
+  .grad { background: linear-gradient(90deg, var(--blue), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+
+  /* ── Divider ── */
+  .divider { height: 1px; background: var(--border); margin: 30px 0; }
+
+  /* ── Highlight ── */
+  code {
+    background: rgba(110,118,129,0.15);
+    border: 1px solid rgba(110,118,129,0.3);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12px;
+    color: var(--orange);
+  }
+
+  /* ── Animate on scroll ── */
+  .fade-in {
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.5s ease;
+  }
+  .fade-in.visible {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* Stagger delays */
+  .delay-1 { transition-delay: 0.1s; }
+  .delay-2 { transition-delay: 0.2s; }
+  .delay-3 { transition-delay: 0.3s; }
+  .delay-4 { transition-delay: 0.4s; }
+  .delay-5 { transition-delay: 0.5s; }
+</style>
+</head>
+<body>
+
+<!-- ── Hero ── -->
+<div class="hero">
+  <div class="particles" id="particles"></div>
+  <div class="hero-badge">🔬 Claude Skills</div>
+  <h1>Auto-Research &amp; Dashboard</h1>
+  <p>一套完整的 AI/ML 学术研究自动化流水线，从灵感到论文全程覆盖，配合实验监控看板实时追踪多机器 GPU 实验进展。</p>
+  <div class="hero-btns">
+    <a href="http://10.165.232.227:8080" class="btn btn-primary" target="_blank">🚀 打开 Dashboard</a>
+    <a href="#pipeline" class="btn btn-outline">查看流水线 ↓</a>
+    <a href="#quickstart" class="btn btn-outline">快速开始 ↓</a>
+  </div>
+</div>
+
+<!-- ── Main body with TOC ── -->
+<div class="page-layout">
+<main>
+
+<!-- ── Overview ── -->
+<section id="overview">
+  <div class="section-label">概览</div>
+  <h2>两个 Skill，一套工作流</h2>
+  <p class="section-desc">auto-research 负责驱动整个研究流程，autoresearch-dashboard 负责实时可视化实验状态，两者配合使用。</p>
+
+  <div class="arch-diagram fade-in">
+    <div class="arch-box">
+      <div class="icon">🧠</div>
+      <div class="name">auto-research</div>
+      <div class="label">研究流水线 skill</div>
+    </div>
+    <div class="arch-arrow">⟶</div>
+    <div class="arch-box">
+      <div class="icon">⚗️</div>
+      <div class="name">实验脚本</div>
+      <div class="label">tracker.py 上报</div>
+    </div>
+    <div class="arch-arrow">⟶</div>
+    <div class="arch-box">
+      <div class="icon">📊</div>
+      <div class="name">Dashboard</div>
+      <div class="label">server.py 可视化</div>
+    </div>
+    <div class="arch-arrow">⟶</div>
+    <div class="arch-box">
+      <div class="icon">📝</div>
+      <div class="name">论文/报告</div>
+      <div class="label">LaTeX / Markdown</div>
+    </div>
+  </div>
+
+  <div class="stat-row">
+    <div class="stat-item fade-in delay-1">
+      <span class="stat-num" data-target="13">0</span>
+      <div class="stat-label">研究阶段</div>
+    </div>
+    <div class="stat-item fade-in delay-2">
+      <span class="stat-num" data-target="4">0</span>
+      <div class="stat-label">辩论 Agent 类型</div>
+    </div>
+    <div class="stat-item fade-in delay-3">
+      <span class="stat-num" data-target="5">0</span>
+      <div class="stat-label">Dashboard 视图</div>
+    </div>
+    <div class="stat-item fade-in delay-4">
+      <span class="stat-num" data-target="2">0</span>
+      <div class="stat-label">运行模式</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Pipeline ── -->
+<section id="pipeline">
+  <div class="section-label">auto-research skill</div>
+  <h2>研究流水线 — 13 个阶段</h2>
+  <p class="section-desc">从选题到投稿，每个阶段都有明确的输入输出和检查点，支持随时恢复。</p>
+
+  <div class="tabs" id="mode-tabs">
+    <button class="tab active" onclick="switchMode('paper')">📄 论文模式（默认）</button>
+    <button class="tab" onclick="switchMode('research')">🔬 纯研究模式</button>
+  </div>
+
+  <div id="mode-paper" class="tab-content active">
+    <div class="pipeline" id="pipeline-paper">
+      <!-- rows injected by JS -->
+    </div>
+  </div>
+  <div id="mode-research" class="tab-content">
+    <div class="pipeline" id="pipeline-research">
+    </div>
+  </div>
+
+  <!-- Loop Flow Diagram -->
+  <div style="margin-top:40px" class="fade-in">
+    <div style="text-align:center;font-size:12px;font-weight:700;letter-spacing:1.5px;color:var(--text-dim);text-transform:uppercase;margin-bottom:16px">
+      ↩ Feedback Loops
+    </div>
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+      <svg viewBox="0 0 860 268" width="100%" style="min-width:600px;max-width:860px;display:block;margin:0 auto">
+        <defs>
+          <marker id="arr-fwd" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+            <path d="M0,0 L0,7 L7,3.5 z" fill="#30363d"/>
+          </marker>
+          <marker id="arr-orange" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+            <path d="M0,0 L0,7 L7,3.5 z" fill="#f0883e"/>
+          </marker>
+          <marker id="arr-red" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+            <path d="M0,0 L0,7 L7,3.5 z" fill="#f85149"/>
+          </marker>
+          <marker id="arr-purple" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+            <path d="M0,0 L0,7 L7,3.5 z" fill="#bc8cff"/>
+          </marker>
+          <style>
+            .loop-arc { stroke-dasharray: 5 3; }
+            .loop-arc { animation: loop-dash 2.5s linear infinite; }
+            @keyframes loop-dash { to { stroke-dashoffset: -16; } }
+          </style>
+        </defs>
+
+        <!-- ─── Phase boxes (y=64, height=46) ─── -->
+        <!-- Phase 0 -->
+        <rect x="8" y="64" width="72" height="46" rx="8" fill="#0f1117" stroke="#30363d" stroke-width="1.5"/>
+        <text x="44" y="84" text-anchor="middle" fill="#8b949e" font-size="9.5" font-weight="700" letter-spacing="0.5">PHASE 0</text>
+        <text x="44" y="100" text-anchor="middle" fill="#e6edf3" font-size="11.5" font-weight="700">Setup</text>
+
+        <!-- Phase 1–2 -->
+        <rect x="110" y="64" width="112" height="46" rx="8" fill="#120d1f" stroke="#bc8cff" stroke-width="1.5"/>
+        <text x="166" y="84" text-anchor="middle" fill="#bc8cff" font-size="9.5" font-weight="700" letter-spacing="0.5">PHASE 1–2</text>
+        <text x="166" y="100" text-anchor="middle" fill="#e6edf3" font-size="11.5" font-weight="700">Ideation</text>
+
+        <!-- Phase 3–5 -->
+        <rect x="252" y="64" width="112" height="46" rx="8" fill="#1a1208" stroke="#f0883e" stroke-width="1.5"/>
+        <text x="308" y="84" text-anchor="middle" fill="#f0883e" font-size="9.5" font-weight="700" letter-spacing="0.5">PHASE 3–5</text>
+        <text x="308" y="100" text-anchor="middle" fill="#e6edf3" font-size="11.5" font-weight="700">Pilot</text>
+
+        <!-- Phase 6–8 -->
+        <rect x="394" y="64" width="124" height="46" rx="8" fill="#091809" stroke="#3fb950" stroke-width="1.5"/>
+        <text x="456" y="84" text-anchor="middle" fill="#3fb950" font-size="9.5" font-weight="700" letter-spacing="0.5">PHASE 6–8</text>
+        <text x="456" y="100" text-anchor="middle" fill="#e6edf3" font-size="11.5" font-weight="700">Experiments</text>
+
+        <!-- Phase 9 -->
+        <rect x="548" y="64" width="96" height="46" rx="8" fill="#091815" stroke="#39d353" stroke-width="1.5"/>
+        <text x="596" y="84" text-anchor="middle" fill="#39d353" font-size="9.5" font-weight="700" letter-spacing="0.5">PHASE 9</text>
+        <text x="596" y="100" text-anchor="middle" fill="#e6edf3" font-size="11.5" font-weight="700">Analysis</text>
+
+        <!-- Phase 10–12 -->
+        <rect x="674" y="64" width="116" height="46" rx="8" fill="#091220" stroke="#58a6ff" stroke-width="1.5"/>
+        <text x="732" y="84" text-anchor="middle" fill="#58a6ff" font-size="9.5" font-weight="700" letter-spacing="0.5">PHASE 10–12</text>
+        <text x="732" y="100" text-anchor="middle" fill="#e6edf3" font-size="11.5" font-weight="700">Writing</text>
+
+        <!-- ─── Forward arrows ─── -->
+        <line x1="80" y1="87" x2="107" y2="87" stroke="#30363d" stroke-width="1.5" marker-end="url(#arr-fwd)"/>
+        <line x1="222" y1="87" x2="249" y2="87" stroke="#30363d" stroke-width="1.5" marker-end="url(#arr-fwd)"/>
+        <line x1="364" y1="87" x2="391" y2="87" stroke="#30363d" stroke-width="1.5" marker-end="url(#arr-fwd)"/>
+        <line x1="518" y1="87" x2="545" y2="87" stroke="#30363d" stroke-width="1.5" marker-end="url(#arr-fwd)"/>
+        <line x1="644" y1="87" x2="671" y2="87" stroke="#30363d" stroke-width="1.5" marker-end="url(#arr-fwd)"/>
+
+        <!-- ─── Gate badges ─── -->
+        <!-- Acceptance gate on Phase 1-2 -->
+        <rect x="128" y="48" width="76" height="14" rx="4" fill="rgba(188,140,255,0.15)" stroke="rgba(188,140,255,0.4)" stroke-width="1"/>
+        <text x="166" y="58.5" text-anchor="middle" fill="#bc8cff" font-size="8.5" font-weight="600">⏸ Acceptance Gate</text>
+
+        <!-- Go/No-go gate on Phase 9 -->
+        <rect x="554" y="48" width="84" height="14" rx="4" fill="rgba(63,185,80,0.12)" stroke="rgba(63,185,80,0.4)" stroke-width="1"/>
+        <text x="596" y="58.5" text-anchor="middle" fill="#3fb950" font-size="8.5" font-weight="600">⏸ Go / No-Go</text>
+
+        <!-- ─── Loop 1: Ph1-2 Idea REJECT → back to Ph1.2 ─── -->
+        <!-- orange, shallow arc, self-loop on Phase 1-2 -->
+        <path d="M 218,110 C 236,152 88,152 114,110"
+              class="loop-arc" fill="none" stroke="#f0883e" stroke-width="1.8"
+              marker-end="url(#arr-orange)"/>
+        <!-- label pill -->
+        <rect x="104" y="154" width="122" height="18" rx="6" fill="rgba(240,136,62,0.12)" stroke="rgba(240,136,62,0.3)" stroke-width="1"/>
+        <text x="165" y="166" text-anchor="middle" fill="#f0883e" font-size="9.5" font-weight="600">REJECT → next direction</text>
+
+        <!-- ─── Loop 2: Ph3-5 PIVOT → Ph1-2 (new idea round, max ×3) ─── -->
+        <!-- red, medium arc -->
+        <path d="M 356,110 C 376,196 86,196 114,110"
+              class="loop-arc" fill="none" stroke="#f85149" stroke-width="1.8"
+              marker-end="url(#arr-red)"/>
+        <rect x="148" y="198" width="172" height="18" rx="6" fill="rgba(248,81,73,0.12)" stroke="rgba(248,81,73,0.3)" stroke-width="1"/>
+        <text x="234" y="210" text-anchor="middle" fill="#f85149" font-size="9.5" font-weight="600">PIVOT → new idea round (max ×3)</text>
+
+        <!-- ─── Loop 3: Ph6-8 early-stop → Ph3-5 (rollback to Phase 5) ─── -->
+        <!-- purple, deep arc -->
+        <path d="M 510,110 C 530,238 228,238 256,110"
+              class="loop-arc" fill="none" stroke="#bc8cff" stroke-width="1.8"
+              marker-end="url(#arr-purple)"/>
+        <rect x="282" y="240" width="160" height="18" rx="6" fill="rgba(188,140,255,0.12)" stroke="rgba(188,140,255,0.3)" stroke-width="1"/>
+        <text x="362" y="252" text-anchor="middle" fill="#bc8cff" font-size="9.5" font-weight="600">Early-stop → rollback to Phase 5</text>
+
+        <!-- Round counter note -->
+        <text x="852" y="210" text-anchor="end" fill="#8b949e" font-size="9">Round 1 / 2 / 3</text>
+        <text x="852" y="222" text-anchor="end" fill="#8b949e" font-size="9">→ 3rd fail: stop &amp; notify</text>
+      </svg>
+    </div>
+
+    <!-- Loop legend -->
+    <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:center;margin-top:14px;font-size:11.5px">
+      <span style="color:#f0883e">▸ <b>REJECT</b>: Phase 2 debate 拒绝 → 换一个 idea 方向重试，仍在当前 round</span>
+      <span style="color:#f85149">▸ <b>PIVOT</b>: Pilot 验证失败 → 回 Phase 1 提新 idea（最多 3 round）</span>
+      <span style="color:#bc8cff">▸ <b>Early-stop</b>: 实验无改善 → 回 Phase 5 迭代方法</span>
+    </div>
+  </div>
+</section>
+
+<!-- ── Dashboard ── -->
+<section id="dashboard">
+  <div class="section-label">autoresearch-dashboard skill</div>
+  <h2>实验监控 Dashboard</h2>
+  <p class="section-desc">浏览器内实时查看所有实验的状态、指标和训练曲线，无需反复 SSH。</p>
+
+  <!-- Mock dashboard preview -->
+  <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+  <div class="dashboard-preview fade-in" style="min-width:580px">
+    <div class="db-titlebar">
+      <div class="db-dots">
+        <div class="code-dot" style="background:#ff5f57"></div>
+        <div class="code-dot" style="background:#ffbd2e"></div>
+        <div class="code-dot" style="background:#28c840"></div>
+      </div>
+      <div class="db-url">http://10.165.232.227:8080</div>
+    </div>
+    <div class="db-layout">
+      <div class="db-sidebar">
+        <div class="db-sidebar-title">Projects</div>
+        <div class="db-nav-item active" data-tab="runs" onclick="switchDbTab('runs')" style="cursor:pointer">🧪 Runs</div>
+        <div class="db-nav-item" data-tab="results" onclick="switchDbTab('results')" style="cursor:pointer">📈 Results</div>
+        <div class="db-nav-item" data-tab="gpus" onclick="switchDbTab('gpus')" style="cursor:pointer">🖥 GPUs</div>
+        <div class="db-nav-item" data-tab="paper" onclick="switchDbTab('paper')" style="cursor:pointer">📄 Paper</div>
+        <div class="db-stats">
+          <div class="db-stat">
+            <div class="db-stat-label">RUNNING</div>
+            <div class="db-stat-val" style="color:var(--blue)" id="cnt-run">0</div>
+          </div>
+          <div class="db-stat">
+            <div class="db-stat-label">DONE</div>
+            <div class="db-stat-val" style="color:var(--green)" id="cnt-done">0</div>
+          </div>
+          <div class="db-stat">
+            <div class="db-stat-label">QUEUED</div>
+            <div class="db-stat-val" style="color:var(--text-dim)" id="cnt-pend">0</div>
+          </div>
+        </div>
+      </div>
+      <div class="db-main" id="db-main-area">
+        <div id="db-tab-content"></div>
+      </div>
+    </div>
+  </div>
+  </div><!-- /overflow-x scroll wrapper -->
+
+  <div class="divider"></div>
+
+  <div class="features-grid" style="margin-top:24px">
+    <div class="feature-card fade-in delay-1">
+      <span class="feature-icon">📡</span>
+      <h3>SSE 实时推送</h3>
+      <p>实验脚本通过 <code>tracker.py</code> 实时 HTTP POST 上报指标，Dashboard 用 Server-Sent Events 立即刷新，无需手动刷新页面。</p>
+    </div>
+    <div class="feature-card fade-in delay-2">
+      <span class="feature-icon">📉</span>
+      <h3>训练曲线</h3>
+      <p>点击任意实验展开 Chart.js 训练曲线，自动采样到最多 300 点，支持 loss / acc / ECE 等所有上报的指标。</p>
+    </div>
+    <div class="feature-card fade-in delay-3">
+      <span class="feature-icon">🧮</span>
+      <h3>结果对比表</h3>
+      <p>自动按 method × dataset 聚合 mean±std，高亮最优值，显示 Δ vs best baseline，支持显著性标记（* p&lt;0.05）。</p>
+    </div>
+    <div class="feature-card fade-in delay-4">
+      <span class="feature-icon">🖥</span>
+      <h3>GPU 监控</h3>
+      <p>调用 <code>gnvitop --agent</code> 列出所有机器的 GPU 使用率/显存，自动匹配正在运行中的实验，标记 A6000 黑名单。</p>
+    </div>
+    <div class="feature-card fade-in delay-5">
+      <span class="feature-icon">✈️</span>
+      <h3>离线集群支持</h3>
+      <p>NCI Gadi / C500 等无外网节点自动切换 offline 模式，结果保存到 <code>pending_sync/</code>，从 login 节点一条命令同步。</p>
+    </div>
+    <div class="feature-card fade-in" style="transition-delay:0.6s">
+      <span class="feature-icon">📄</span>
+      <h3>PDF 内嵌查看</h3>
+      <p>Paper 标签页直接在浏览器内渲染 LaTeX 编译生成的 PDF，切换多个版本，无需下载。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── Quick Start ── -->
+<section id="quickstart">
+  <div class="section-label">快速开始</div>
+  <h2>三步上手</h2>
+  <p class="section-desc">无需安装额外依赖，服务器在 <code>~/.claude/skills/autoresearch-dashboard/</code>。</p>
+
+  <!-- Step 1 -->
+  <h3 style="margin-bottom:12px; color:var(--blue)">Step 1 · 启动 Dashboard 服务器</h3>
+  <div class="code-wrap">
+    <div class="code-header">
+      <div class="code-dots">
+        <div class="code-dot" style="background:#ff5f57"></div>
+        <div class="code-dot" style="background:#ffbd2e"></div>
+        <div class="code-dot" style="background:#28c840"></div>
+      </div>
+      <span class="code-lang">bash</span>
+      <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+    </div>
+    <pre><span class="bash-prompt">$</span> <span class="bash-cmd">pgrep -f "autoresearch-dashboard/server.py" &gt; /dev/null || \
+  nohup python3 ~/.claude/skills/autoresearch-dashboard/server.py &gt; /tmp/rdb.log 2>&amp;1 &amp;</span>
+<span class="bash-prompt">$</span> <span class="bash-cmd">echo "Dashboard: http://$(hostname -I | awk '{print $1}'):8080"</span>
+<span class="c"># → Dashboard: http://10.165.232.227:8080</span></pre>
+  </div>
+
+  <!-- Step 2 -->
+  <h3 style="margin:24px 0 12px; color:var(--blue)">Step 2 · 在实验脚本中接入 tracker</h3>
+  <div class="code-wrap">
+    <div class="code-header">
+      <div class="code-dots">
+        <div class="code-dot" style="background:#ff5f57"></div>
+        <div class="code-dot" style="background:#ffbd2e"></div>
+        <div class="code-dot" style="background:#28c840"></div>
+      </div>
+      <span class="code-lang">python</span>
+      <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+    </div>
+    <pre><span class="k">import</span> <span class="n">sys</span>, <span class="n">os</span>
+<span class="n">sys</span>.<span class="m">path</span>.<span class="m">insert</span>(<span class="v">0</span>, <span class="n">os</span>.<span class="m">path</span>.<span class="m">expanduser</span>(<span class="s">"~/.claude/skills/autoresearch-dashboard"</span>))
+<span class="k">import</span> <span class="n">tracker</span>
+
+<span class="n">run</span> = <span class="n">tracker</span>.<span class="f">init</span>(
+    <span class="n">project</span>=<span class="s">"my-project"</span>,      <span class="c"># HOME 下的目录名</span>
+    <span class="n">name</span>=<span class="s">"exp1_cifar10c_main_s0"</span>,
+    <span class="n">host</span>=<span class="s">"10.165.232.227"</span>,       <span class="c"># Dashboard 服务器 IP</span>
+    <span class="n">config</span>={
+        <span class="s">"method"</span>:  <span class="s">"our_method"</span>,
+        <span class="s">"dataset"</span>: <span class="s">"cifar10c"</span>,
+        <span class="s">"group"</span>:   <span class="s">"main"</span>,        <span class="c"># "main" / "baseline" / "ablation"</span>
+        <span class="s">"seed"</span>: <span class="v">0</span>,
+        <span class="s">"lr"</span>: <span class="v">0.001</span>,
+    },
+)
+
+<span class="c"># 训练循环中每 N 步自动上报</span>
+<span class="k">for</span> <span class="n">step</span> <span class="k">in</span> <span class="f">range</span>(<span class="v">10000</span>):
+    <span class="n">loss</span> = <span class="f">train_step</span>()
+    <span class="n">run</span>.<span class="f">log</span>({<span class="s">"loss"</span>: <span class="n">loss</span>, <span class="s">"step"</span>: <span class="n">step</span>})
+
+<span class="c"># 结束时上报 final metrics → 写入 all_results.csv</span>
+<span class="n">run</span>.<span class="f">finish</span>({<span class="s">"final_acc"</span>: <span class="v">92.3</span>, <span class="s">"final_ece"</span>: <span class="v">4.1</span>})</pre>
+  </div>
+  <div class="callout">
+    <strong>group 字段说明：</strong>必须使用规范值 <code>"main"</code>（我们的方法）/ <code>"baseline"</code>（对比基线）/ <code>"ablation"</code>（消融实验）/ <code>"analysis"</code>。这直接影响结果表的列排序和 early-stop 逻辑。
+  </div>
+
+  <!-- Step 3 -->
+  <h3 style="margin:24px 0 12px; color:var(--blue)">Step 3 · 启动 auto-research 流水线</h3>
+  <div class="callout success">
+    <strong>在 Claude Code 中输入：</strong><br>
+    「帮我研究 [你的想法]」或「/auto-research」<br><br>
+    Claude 会自动调用 auto-research skill，从 Phase 0 Setup 开始，带你走完整个流程。
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- Offline sync -->
+  <h3 style="margin-bottom:12px">离线集群同步（NCI Gadi / C500）</h3>
+  <p style="color:var(--text-dim);font-size:13px;margin-bottom:12px">实验节点无法直连 Dashboard 时，自动保存到本地，从 login 节点同步：</p>
+  <div class="code-wrap">
+    <div class="code-header">
+      <div class="code-dots">
+        <div class="code-dot" style="background:#ff5f57"></div>
+        <div class="code-dot" style="background:#ffbd2e"></div>
+        <div class="code-dot" style="background:#28c840"></div>
+      </div>
+      <span class="code-lang">bash</span>
+      <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+    </div>
+    <pre><span class="bash-prompt">$</span> <span class="bash-cmd">python3 ~/.claude/skills/autoresearch-dashboard/tracker_cli.py sync \
+    --host 10.165.232.227 \
+    --project my-project \
+    --pending-dir experiments/results/pending_sync/</span></pre>
+  </div>
+</section>
+
+<!-- ── Architecture ── -->
+<section id="architecture">
+  <div class="section-label">技术架构</div>
+  <h2>数据流向</h2>
+  <p class="section-desc">了解数据从实验脚本到 Dashboard 的完整路径。</p>
+
+  <div class="two-col fade-in">
+    <div>
+      <h3>目录结构（每个项目）</h3>
+      <div class="code-wrap" style="margin-top:12px">
+        <div class="code-header">
+          <div class="code-dots">
+            <div class="code-dot" style="background:#ff5f57"></div>
+            <div class="code-dot" style="background:#ffbd2e"></div>
+            <div class="code-dot" style="background:#28c840"></div>
+          </div>
+          <span class="code-lang">tree</span>
+        </div>
+        <pre><span class="n">~/my-project/</span>
+├── <span class="v">dispatch/</span>
+│   └── <span class="s">state.json</span>        <span class="c"># 实验队列</span>
+├── <span class="v">experiments/</span>
+│   ├── <span class="v">results/</span>
+│   │   ├── <span class="s">runs/</span>         <span class="c"># 每次运行 JSON</span>
+│   │   ├── <span class="s">all_results.csv</span> <span class="c"># 最终指标</span>
+│   │   ├── <span class="s">significance_tests.csv</span>
+│   │   └── <span class="s">pending_sync/</span>  <span class="c"># 离线队列</span>
+│   ├── <span class="v">logs/</span>
+│   │   └── <span class="s">&lt;exp_id&gt;.md</span>   <span class="c"># 实验日志</span>
+│   └── <span class="v">scripts/</span>
+├── <span class="v">plan/</span>
+│   └── <span class="s">TODO.md</span>          <span class="c"># Phase 进度</span>
+└── <span class="v">progress/</span>
+    └── <span class="s">progress.md</span></pre>
+      </div>
+    </div>
+    <div>
+      <h3>API 端点</h3>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:12px">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px">
+          <span style="color:var(--green);font-family:monospace;font-weight:600">POST</span>
+          <code>/api/submit</code>
+          <div style="color:var(--text-dim);margin-top:3px">tracker.py 上报指标，自动写 runs/*.json 和 all_results.csv</div>
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px">
+          <span style="color:var(--blue);font-family:monospace;font-weight:600">GET</span>
+          <code>/api/research/&lt;project&gt;</code>
+          <div style="color:var(--text-dim);margin-top:3px">全量研究数据：runs + summary + results table</div>
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px">
+          <span style="color:var(--blue);font-family:monospace;font-weight:600">GET</span>
+          <code>/api/events/&lt;project&gt;</code>
+          <div style="color:var(--text-dim);margin-top:3px">SSE 实时推送，实验状态变更即时通知</div>
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px">
+          <span style="color:var(--blue);font-family:monospace;font-weight:600">GET</span>
+          <code>/api/steps/&lt;project&gt;/&lt;exp_id&gt;</code>
+          <div style="color:var(--text-dim);margin-top:3px">训练曲线 step_logs，按需加载</div>
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px">
+          <span style="color:var(--blue);font-family:monospace;font-weight:600">GET</span>
+          <code>/api/gpus</code>
+          <div style="color:var(--text-dim);margin-top:3px">调用 gnvitop --agent，缓存 30s</div>
+        </div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:12px">
+          <span style="color:var(--blue);font-family:monospace;font-weight:600">GET</span>
+          <code>/api/significance/&lt;project&gt;</code>
+          <div style="color:var(--text-dim);margin-top:3px">加载 significance_tests.csv，显示 * 标记</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Debate Agents ── -->
+<section id="agents">
+  <div class="section-label">Debate Agents</div>
+  <h2>多 Agent 辩论机制</h2>
+  <p class="section-desc">研究过程中的关键决策由多个 Claude agent 从不同角色出发辩论，避免单点偏见。</p>
+
+  <div class="features-grid">
+    <div class="feature-card fade-in">
+      <span class="feature-icon">💡</span>
+      <h3>Idea Debate <span class="tag tag-blue">Phase 2</span></h3>
+      <p>6 位模拟评审者 + 1 位 AC，对提出的 idea 从创新性、实验可行性、相关工作等维度打分辩论。只有通过 acceptance gate 才能进入下一阶段。</p>
+    </div>
+    <div class="feature-card fade-in delay-1">
+      <span class="feature-icon">🔬</span>
+      <h3>Experiment Design Debate <span class="tag tag-orange">Phase 7</span></h3>
+      <p>4 位 agent 分别扮演方法设计者、统计学家、实现工程师、批评者，确保实验设计覆盖所有 baselines 且统计上合理。</p>
+    </div>
+    <div class="feature-card fade-in delay-2">
+      <span class="feature-icon">📊</span>
+      <h3>Result Debate <span class="tag tag-green">Phase 9</span></h3>
+      <p>6 位分析师从 Skeptic（质疑）、Advocate（辩护）、Statistician（统计）等角度分析结果，输出 go/no-go 决策。</p>
+    </div>
+    <div class="feature-card fade-in delay-3">
+      <span class="feature-icon">📝</span>
+      <h3>Peer Review Simulation <span class="tag tag-purple">Phase 11</span></h3>
+      <p>模拟 ICML/NeurIPS 审稿流程：6 位评审 + 1 位 AC，给出评分和 rebuttal 要点，在投稿前发现弱点。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── Early Stop ── -->
+<section id="earlystop">
+  <div class="section-label">实验控制</div>
+  <h2>Early-Stop 自动取消机制</h2>
+  <p class="section-desc">方法在前几个 seed 就表现很差时，自动取消剩余实验，节省 GPU 时间。</p>
+
+  <div class="two-col">
+    <div class="fade-in">
+      <h3>工作原理</h3>
+      <ol style="color:var(--text-dim);font-size:13px;padding-left:20px;line-height:2">
+        <li>每次实验完成后运行 <code>early_stop_check.py</code></li>
+        <li>读取 <code>all_results.csv</code>，计算 our method vs best baseline 的 improvement</li>
+        <li>如果所有已完成实验的 improvement 均 &lt; threshold（默认 0.5%）</li>
+        <li>将该 group 内所有 pending 实验状态改为 <code>"cancelled"</code></li>
+        <li>Supervisor 不再启动被取消的实验</li>
+      </ol>
+    </div>
+    <div class="fade-in delay-2">
+      <h3>dispatch/state.json 配置</h3>
+      <div class="code-wrap">
+        <div class="code-header">
+          <div class="code-dots">
+            <div class="code-dot" style="background:#ff5f57"></div>
+            <div class="code-dot" style="background:#ffbd2e"></div>
+            <div class="code-dot" style="background:#28c840"></div>
+          </div>
+          <span class="code-lang">json</span>
+        </div>
+        <pre>{
+  <span class="s">"id"</span>: <span class="v">"exp1_cifar10c_main_s0"</span>,
+  <span class="s">"group"</span>: <span class="v">"main_cifar10c"</span>,       <span class="c">// group key</span>
+  <span class="s">"early_stop_check_after"</span>: <span class="v">1</span>,  <span class="c">// 几个完成后检查</span>
+  <span class="s">"early_stop_threshold_pct"</span>: <span class="v">0.5</span>,
+  <span class="s">"early_stop_metric"</span>: <span class="v">"acc"</span>,
+  <span class="s">"status"</span>: <span class="v">"pending"</span>
+}</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── FAQ / Tips ── -->
+<section id="tips">
+  <div class="section-label">常见问题</div>
+  <h2>Tips &amp; FAQ</h2>
+
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <details style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px">
+      <summary style="cursor:pointer;font-weight:600;font-size:14px;list-style:none">▸ &nbsp;如何中途恢复（Claude context 断了）？</summary>
+      <div style="margin-top:12px;font-size:13px;color:var(--text-dim)">
+        按顺序读取：<code>plan/TODO.md</code>（找当前 phase）→ <code>progress/progress.md</code>（看决策日志）→ <code>dispatch/state.json</code>（检查是否有 zombie running 状态）。然后告诉 Claude 当前 phase，它会自动继续。
+      </div>
+    </details>
+
+    <details style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px">
+      <summary style="cursor:pointer;font-weight:600;font-size:14px;list-style:none">▸ &nbsp;results 表里看不到我的实验？</summary>
+      <div style="margin-top:12px;font-size:13px;color:var(--text-dim)">
+        Results 表只显示 <code>run.finish()</code> 调用后的实验（已写入 <code>all_results.csv</code>）。正在运行中的实验会出现在 Runs 视图里，状态为 running。检查 config 中是否设置了 <code>"method"</code> 和 <code>"dataset"</code> 字段。
+      </div>
+    </details>
+
+    <details style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px">
+      <summary style="cursor:pointer;font-weight:600;font-size:14px;list-style:none">▸ &nbsp;显著性标记 * 没有显示？</summary>
+      <div style="margin-top:12px;font-size:13px;color:var(--text-dim)">
+        需要先运行 Phase 9.0 统计检验脚本生成 <code>experiments/results/significance_tests.csv</code>。Dashboard 会显示黄色警告提示。运行后刷新页面或切换项目重新载入。
+      </div>
+    </details>
+
+    <details style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px">
+      <summary style="cursor:pointer;font-weight:600;font-size:14px;list-style:none">▸ &nbsp;如何只做实验不写论文？</summary>
+      <div style="margin-top:12px;font-size:13px;color:var(--text-dim)">
+        在启动时告诉 Claude「不用写文章」/ 「只要验证算法」，或者在 Phase 0 选择 <strong>research-only 模式</strong>。Phase 9 go/no-go 通过后输出 <code>report/research_report.md</code> 而不是 LaTeX 论文。
+      </div>
+    </details>
+
+    <details style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px">
+      <summary style="cursor:pointer;font-weight:600;font-size:14px;list-style:none">▸ &nbsp;项目名有空格或特殊字符？</summary>
+      <div style="margin-top:12px;font-size:13px;color:var(--text-dim)">
+        建议使用 kebab-case（<code>my-project</code>）或下划线（<code>my_project</code>）。Dashboard API 会自动 URL encode。项目目录直接在 HOME 下。
+      </div>
+    </details>
+  </div>
+</section>
+
+</main>
+
+<!-- ── TOC ── -->
+<aside>
+  <div class="toc">
+    <div class="toc-title">目录</div>
+    <a href="#overview">概览</a>
+    <a href="#pipeline">研究流水线</a>
+    <a href="#dashboard">Dashboard</a>
+    <a href="#quickstart">快速开始</a>
+    <a href="#architecture">技术架构</a>
+    <a href="#agents">Debate Agents</a>
+    <a href="#earlystop">Early-Stop</a>
+    <a href="#tips">FAQ</a>
+    <div style="margin-top:20px;padding-top:14px;border-top:1px solid var(--border)">
+      <div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text-dim);margin-bottom:10px">Dashboard</div>
+      <a href="http://10.165.232.227:8080" target="_blank" style="display:flex;align-items:center;gap:6px;background:rgba(63,185,80,0.1);border:1px solid rgba(63,185,80,0.3);color:var(--green);padding:8px 12px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none">
+        <span class="db-pulse" style="flex-shrink:0"></span>
+        打开 Dashboard
+      </a>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:6px;text-align:center">10.165.232.227:8080</div>
+    </div>
+  </div>
+</aside>
+</div>
+
+<!-- ── Footer ── -->
+<footer>
+  <div style="margin-bottom:8px">
+    <a href="http://10.165.232.227:8080" style="color:var(--blue);text-decoration:none;font-weight:600" target="_blank">http://10.165.232.227:8080</a>
+    <span style="margin:0 12px;color:var(--border)">|</span>
+    <span>auto-research + autoresearch-dashboard skills</span>
+  </div>
+  <div style="color:#484f58;font-size:12px">服务运行在 ~/.claude/skills/autoresearch-dashboard/server.py · port 8080</div>
+</footer>
+
+<script>
+// ── Particles ──
+const pContainer = document.getElementById('particles');
+for (let i = 0; i < 30; i++) {
+  const p = document.createElement('div');
+  p.className = 'particle';
+  p.style.cssText = `left:${Math.random()*100}%;top:${20+Math.random()*80}%;--dur:${6+Math.random()*10}s;--delay:${Math.random()*8}s;background:${['#58a6ff','#bc8cff','#3fb950'][Math.floor(Math.random()*3)]}`;
+  pContainer.appendChild(p);
+}
+
+// ── Pipeline data ──
+const phases = [
+  { num: 0, label: 'Phase 0', title: 'Setup', tag: 'tag-blue', tagLabel: 'Foundation',
+    desc: '初始化项目目录结构、Git 仓库、dispatch/state.json，启动实验 supervisor daemon。' },
+  { num: '1–2', label: 'Phase 1–2', title: 'Ideation', tag: 'tag-purple', tagLabel: 'Idea',
+    desc: '文献调研 → 提出 idea → Idea Debate（6位评审+AC）→ 形成 proposal.md 和 experiment_plan.md。' },
+  { num: '3–5', label: 'Phase 3–5', title: 'Pilot', tag: 'tag-orange', tagLabel: 'Validation',
+    desc: '设计 2–4 个小规模 pilot 实验（1/4 数据，1 个 seed）→ 运行 → 分析结果 → 决定 proceed/rollback/pivot。' },
+  { num: '6–8', label: 'Phase 6–8', title: 'Experiments', tag: 'tag-green', tagLabel: 'Full Scale',
+    desc: '完整实验设计辩论 → 自动 dispatch 到多机 GPU → early-stop 机制 → 追加 ablation/analysis 实验。' },
+  { num: 9, label: 'Phase 9', title: 'Analysis', tag: 'tag-cyan', tagLabel: 'Results',
+    desc: '统计显著性检验 → Result Debate（6位分析师）→ go/no-go gate → 确认最终结果集。' },
+  { num: '10–11', label: 'Phase 10–11', title: 'Writing', tag: 'tag-blue', tagLabel: 'Paper',
+    desc: 'LaTeX 论文撰写（Abstract→Intro→Method→Exp→Conclusion）→ 图表生成 → Peer Review 模拟。' },
+  { num: 12, label: 'Phase 12', title: 'Rebuttal', tag: 'tag-purple', tagLabel: 'Submission',
+    desc: '投稿后处理：审稿意见分析 → 分点 rebuttal 撰写 → 最终 camera-ready 修改。' },
+];
+
+const researchPhases = phases.slice(0, 6);
+researchPhases[5] = { num: '9.5', label: 'Phase 9.5', title: 'Research Report', tag: 'tag-cyan', tagLabel: 'Report',
+  desc: '生成 report/research_report.md — 包含背景、方法、结果表、结论，适合内部汇报或 arxiv preprint。' };
+
+function buildPipeline(phases, containerId) {
+  const container = document.getElementById(containerId);
+  phases.forEach((p, i) => {
+    const row = document.createElement('div');
+    row.className = 'pipe-row';
+    row.style.transitionDelay = `${i * 0.08}s`;
+    row.innerHTML = `
+      <div class="pipe-phase">${p.label}</div>
+      <div class="pipe-line-wrap">
+        ${i > 0 ? '<div class="pipe-connector"></div>' : ''}
+        <div class="pipe-dot"></div>
+        ${i < phases.length-1 ? '<div class="pipe-connector"></div>' : ''}
+      </div>
+      <div class="pipe-card">
+        <div class="pipe-card-header">
+          <span class="pipe-card-title">${p.title}</span>
+          <span class="tag ${p.tag}">${p.tagLabel}</span>
+        </div>
+        <div class="pipe-card-desc">${p.desc}</div>
+      </div>`;
+    container.appendChild(row);
+  });
+}
+buildPipeline(phases, 'pipeline-paper');
+buildPipeline(researchPhases, 'pipeline-research');
+
+function switchMode(mode) {
+  document.querySelectorAll('#mode-tabs .tab').forEach((t, i) => t.classList.toggle('active', (mode==='paper'&&i===0)||(mode==='research'&&i===1)));
+  document.getElementById('mode-paper').classList.toggle('active', mode==='paper');
+  document.getElementById('mode-research').classList.toggle('active', mode==='research');
+  observePipeline();
+}
+
+// ── Mock dashboard data ──
+const mockRuns = [
+  { id: 'exp1_cifar10c_main_s0', status: 'running', loss: '0.142', acc: '91.3%', time: '2h 14m' },
+  { id: 'exp1_cifar10c_main_s1', status: 'running', loss: '0.158', acc: '90.8%', time: '2h 09m' },
+  { id: 'exp1_cifar10c_baseline_s0', status: 'done', loss: '0.201', acc: '88.4%', time: '1h 52m' },
+  { id: 'exp2_cifar100_main_s0', status: 'pending', loss: '—', acc: '—', time: '—' },
+  { id: 'exp2_cifar100_main_s1', status: 'pending', loss: '—', acc: '—', time: '—' },
+];
+
+function renderDashboard() {
+  const tbody = document.getElementById('db-rows');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  mockRuns.forEach((r, i) => {
+    const row = document.createElement('div');
+    row.className = 'db-table-row';
+    row.style.animationDelay = `${i * 0.15 + 0.5}s`;
+    const badgeCls = r.status === 'running' ? 'db-badge-run' : r.status === 'done' ? 'db-badge-done' : 'db-badge-pend';
+    const lossHtml = r.status !== 'pending' ? `<span class="db-metric">${r.loss}</span>` : `<span class="db-metric-dim">—</span>`;
+    const accHtml  = r.status !== 'pending' ? `<span class="db-metric">${r.acc}</span>` : `<span class="db-metric-dim">—</span>`;
+    row.innerHTML = `
+      <span style="font-family:monospace;font-size:10px;color:var(--text-dim)">${r.id}</span>
+      <span><span class="db-badge ${badgeCls}">${r.status}</span></span>
+      ${lossHtml}
+      ${accHtml}
+      <span style="color:var(--text-dim)">${r.time}</span>`;
+    tbody.appendChild(row);
+  });
+  animateCount('cnt-run', 2);
+  animateCount('cnt-done', 1);
+  animateCount('cnt-pend', 2);
+}
+
+// ── Dashboard tab switching ──
+const DB_TAB_CONTENT = {
+  runs: () => `
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px">Experiments — <span style="color:var(--text)">my-research-project</span> <span class="db-pulse"></span> Live</div>
+    <div class="db-table">
+      <div class="db-table-head">
+        <span>Exp ID</span><span>Status</span><span>Loss</span><span>Acc</span><span>Time</span>
+      </div>
+      <div id="db-rows"></div>
+    </div>`,
+
+  results: () => `
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">Results — <span style="color:var(--text)">my-research-project</span> &nbsp;·&nbsp; method × dataset</div>
+    <div style="overflow-x:auto">
+    <table style="width:100%;font-size:10.5px;border-collapse:collapse;font-family:monospace">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border)">
+          <th style="text-align:left;padding:4px 8px;color:var(--text-dim);font-weight:600">Method</th>
+          <th style="padding:4px 8px;color:var(--text-dim);font-weight:600">CIFAR-10C</th>
+          <th style="padding:4px 8px;color:var(--text-dim);font-weight:600">CIFAR-100C</th>
+          <th style="padding:4px 8px;color:var(--text-dim);font-weight:600">ImageNet-C</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.05);background:rgba(63,185,80,0.06)">
+          <td style="padding:5px 8px;color:var(--green);font-weight:700">our_method</td>
+          <td style="padding:5px 8px;text-align:center;color:var(--green);font-weight:700">91.3 ± 0.3 ★<br><span style="font-size:9px;color:var(--green)">+2.9%*</span></td>
+          <td style="padding:5px 8px;text-align:center;color:var(--green);font-weight:700">68.7 ± 0.4 ★<br><span style="font-size:9px;color:var(--green)">+3.1%*</span></td>
+          <td style="padding:5px 8px;text-align:center;color:var(--green);font-weight:700">52.4 ± 0.5 ★<br><span style="font-size:9px;color:var(--green)">+1.8%*</span></td>
+        </tr>
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
+          <td style="padding:5px 8px;color:var(--text-dim)">baseline_ttac</td>
+          <td style="padding:5px 8px;text-align:center;color:var(--text)">88.4 ± 0.5</td>
+          <td style="padding:5px 8px;text-align:center;color:var(--text)">65.6 ± 0.6</td>
+          <td style="padding:5px 8px;text-align:center;color:var(--text)">50.6 ± 0.4</td>
+        </tr>
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
+          <td style="padding:5px 8px;color:var(--text-dim)">baseline_tent</td>
+          <td style="padding:5px 8px;text-align:center;color:var(--text)">86.1 ± 0.7</td>
+          <td style="padding:5px 8px;text-align:center;color:var(--text)">63.2 ± 0.5</td>
+          <td style="padding:5px 8px;text-align:center;color:var(--text)">49.1 ± 0.6</td>
+        </tr>
+        <tr>
+          <td style="padding:5px 8px;color:var(--text-dim)">source_only</td>
+          <td style="padding:5px 8px;text-align:center;color:var(--text)">82.3 ± 0.4</td>
+          <td style="padding:5px 8px;text-align:center;color:var(--text)">59.8 ± 0.3</td>
+          <td style="padding:5px 8px;text-align:center;color:var(--text)">45.3 ± 0.5</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+    <div style="font-size:10px;color:var(--text-dim);margin-top:6px">★ best &nbsp;· * p&lt;0.05 vs best baseline</div>`,
+
+  gpus: () => `
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">GPU Status — <span style="color:var(--text)">All Machines</span> &nbsp;<span class="db-pulse"></span> Live</div>
+    ${[
+      { host: 'xuchang-lab1', gpus: [{id:0,name:'A100 80G',util:87,mem:'52/80',exp:'exp1_s0'},{id:1,name:'A100 80G',util:92,mem:'61/80',exp:'exp1_s1'}] },
+      { host: 'xuchang-lab2', gpus: [{id:0,name:'RTX 3090',util:0,mem:'0/24',exp:null},{id:1,name:'RTX 3090',util:0,mem:'0/24',exp:null}] },
+      { host: 'gadi-gpu-h200-0024', gpus: [{id:0,name:'H200 141G',util:76,mem:'89/141',exp:'exp2_s0'}] },
+    ].map(m => `
+      <div style="margin-bottom:10px">
+        <div style="font-size:10px;font-weight:700;color:var(--text-dim);letter-spacing:0.5px;margin-bottom:4px;text-transform:uppercase">${m.host}</div>
+        ${m.gpus.map(g => {
+          const busy = g.util > 0;
+          const barColor = busy ? (g.util > 80 ? '#f85149' : '#3fb950') : '#484f58';
+          return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;font-size:10px">
+            <span style="color:var(--text-dim);width:16px">G${g.id}</span>
+            <span style="color:var(--text);width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${g.name}</span>
+            <div style="flex:1;height:6px;background:rgba(255,255,255,0.08);border-radius:3px;overflow:hidden">
+              <div style="width:${g.util}%;height:100%;background:${barColor};transition:width 0.8s ease;border-radius:3px"></div>
+            </div>
+            <span style="color:${barColor};width:32px;text-align:right">${g.util}%</span>
+            <span style="color:var(--text-dim);width:52px">${g.mem} GB</span>
+            <span style="color:var(--text-dim);font-family:monospace;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px">${g.exp || '—'}</span>
+          </div>`;
+        }).join('')}
+      </div>`).join('')}`,
+
+  paper: () => `
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">Paper — <span style="color:var(--text)">draft_v3.pdf</span></div>
+    <div style="background:#f8f6f0;border-radius:4px;padding:14px 16px;font-family:Georgia,serif;color:#1a1a1a;font-size:10.5px;line-height:1.6;max-height:230px;overflow-y:auto">
+      <div style="text-align:center;margin-bottom:10px">
+        <div style="font-size:13px;font-weight:700;line-height:1.4">Improving Test-Time Adaptation via<br>Uncertainty-Guided Feature Alignment</div>
+        <div style="font-size:10px;color:#555;margin-top:4px">Anonymous Authors &nbsp;·&nbsp; Under Review at ICML 2026</div>
+      </div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin:8px 0 4px">Abstract</div>
+      <div style="font-size:10px;color:#333;text-align:justify">
+        Test-time adaptation (TTA) methods suffer from distribution shift between source and target domains.
+        We propose <em>UFA</em>, a method that leverages uncertainty estimates to selectively align features
+        during adaptation. Our approach achieves <strong>+2.9%</strong> accuracy on CIFAR-10C and
+        <strong>+3.1%</strong> on CIFAR-100C over prior state-of-the-art, with statistical significance
+        (p&lt;0.05) across all benchmarks. Code will be released upon acceptance.
+      </div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 4px">1. Introduction</div>
+      <div style="font-size:10px;color:#444;text-align:justify">
+        Deep neural networks are known to degrade under distribution shift [1, 2]. Test-time adaptation
+        addresses this by updating model parameters using only the test data itself, without access to
+        source domain data...
+      </div>
+      <div style="text-align:center;margin-top:10px;font-size:9px;color:#888">[page 1 of 9]</div>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <div style="background:rgba(63,185,80,0.12);border:1px solid rgba(63,185,80,0.3);border-radius:4px;padding:3px 8px;font-size:10px;color:var(--green)">draft_v3.pdf</div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:10px;color:var(--text-dim)">draft_v2.pdf</div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:10px;color:var(--text-dim)">draft_v1.pdf</div>
+    </div>`,
+};
+
+function switchDbTab(tab) {
+  document.querySelectorAll('.db-nav-item[data-tab]').forEach(el => {
+    el.classList.toggle('active', el.dataset.tab === tab);
+  });
+  const content = DB_TAB_CONTENT[tab];
+  if (!content) return;
+  document.getElementById('db-tab-content').innerHTML = content();
+  if (tab === 'runs') renderDashboard();
+}
+
+function animateCount(id, target) {
+  let n = 0;
+  const el = document.getElementById(id);
+  const step = () => { if (n < target) { el.textContent = ++n; requestAnimationFrame(step); } };
+  setTimeout(step, 800);
+}
+
+// ── Scroll-based animations ──
+function observeAll() {
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+  }, { threshold: 0.12 });
+  document.querySelectorAll('.fade-in, .feature-card').forEach(el => io.observe(el));
+  observePipeline();
+}
+
+let _pipelineIO = null;
+function observePipeline() {
+  if (_pipelineIO) _pipelineIO.disconnect();
+  _pipelineIO = new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); } });
+  }, { threshold: 0.1 });
+  document.querySelectorAll('.pipe-row').forEach(el => { el.classList.remove('visible'); _pipelineIO.observe(el); });
+}
+
+// ── Animated counters ──
+function animateStatCounters() {
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (!e.isIntersecting) return;
+      const el = e.target;
+      const target = parseInt(el.dataset.target);
+      let cur = 0;
+      const step = () => {
+        cur = Math.min(cur + 1, target);
+        el.textContent = cur;
+        if (cur < target) setTimeout(step, 80);
+      };
+      step();
+      io.unobserve(el);
+    });
+  }, { threshold: 0.5 });
+  document.querySelectorAll('[data-target]').forEach(el => io.observe(el));
+}
+
+// ── Copy code ──
+function copyCode(btn) {
+  const pre = btn.closest('.code-wrap').querySelector('pre');
+  const text = pre.innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+// ── Smooth details animation ──
+document.querySelectorAll('details').forEach(d => {
+  d.addEventListener('toggle', () => {
+    const sum = d.querySelector('summary');
+    sum.textContent = d.open
+      ? sum.textContent.replace('▸', '▾')
+      : sum.textContent.replace('▾', '▸');
+  });
+});
+
+// ── Init ──
+switchDbTab('runs');
+observeAll();
+animateStatCounters();
+</script>
+</body>
+</html>

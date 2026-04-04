@@ -1,0 +1,1397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Result Shower</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #1a1a1a;
+      color: #e0e0e0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Modal ── */
+    #modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 100;
+    }
+    #modal {
+      background: #2a2a2a;
+      border: 1px solid #444;
+      border-radius: 8px;
+      padding: 24px;
+      min-width: 340px;
+      max-width: 560px;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    #modal h2 { font-size: 16px; font-weight: 600; }
+    #project-list {
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      flex: 1;
+    }
+    #project-list label {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      padding: 6px 8px;
+      border-radius: 4px;
+      font-size: 13px;
+      font-family: monospace;
+    }
+    #project-list label:hover { background: #333; }
+    #modal-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    button {
+      padding: 6px 16px;
+      border-radius: 4px;
+      border: 1px solid #555;
+      background: #333;
+      color: #e0e0e0;
+      cursor: pointer;
+      font-size: 13px;
+    }
+    button:hover { background: #444; }
+    #btn-confirm {
+      background: #0066cc;
+      border-color: #0066cc;
+      color: #fff;
+    }
+    #btn-confirm:hover { background: #0055aa; }
+
+    /* ── Project tab bar (top) ── */
+    #tab-bar {
+      display: flex;
+      background: #222;
+      border-bottom: 1px solid #333;
+      overflow-x: auto;
+      flex-shrink: 0;
+    }
+    .tab {
+      padding: 10px 18px;
+      font-size: 13px;
+      font-family: monospace;
+      cursor: pointer;
+      white-space: nowrap;
+      border-bottom: 2px solid transparent;
+      color: #aaa;
+      user-select: none;
+    }
+    .tab:hover { color: #e0e0e0; }
+    .tab.active {
+      color: #fff;
+      border-bottom-color: #0066cc;
+    }
+    .tab.drag-over-left { box-shadow: inset 3px 0 0 #0066cc; }
+    .tab.drag-over-right { box-shadow: inset -3px 0 0 #0066cc; }
+    .tab.dragging { opacity: 0.4; }
+
+    /* ── Content area ── */
+    #viewer {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+    #pdf-pane {
+      flex: 1;
+      min-width: 200px;
+      width: 50%;
+      display: flex;
+      flex-direction: column;
+    }
+    #pdf-selector {
+      background: #222;
+      padding: 4px 8px;
+      border-bottom: 1px solid #333;
+      flex-shrink: 0;
+    }
+    #pdf-selector select {
+      background: #333;
+      color: #e0e0e0;
+      border: 1px solid #555;
+      border-radius: 4px;
+      padding: 3px 8px;
+      font-size: 12px;
+      font-family: monospace;
+      max-width: 100%;
+    }
+    #pdf-pane iframe {
+      border: none;
+      width: 100%;
+      flex: 1;
+    }
+    /* ── Draggable resizer ── */
+    #resizer {
+      width: 5px;
+      cursor: col-resize;
+      background: #333;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    #resizer:hover, #resizer.active { background: #0066cc; }
+    /* ── Markdown pane ── */
+    #md-pane {
+      flex: 1;
+      min-width: 150px;
+      overflow-y: auto;
+      padding: 20px 24px;
+      font-size: 14px;
+      line-height: 1.7;
+      /* Light mode defaults */
+      background: #fff;
+      color: #333;
+    }
+    #md-pane h1 { font-size: 20px; margin: 0 0 12px; }
+    #md-pane h2 { font-size: 16px; margin: 16px 0 8px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+    #md-pane h3 { font-size: 14px; margin: 12px 0 6px; }
+    #md-pane h4, #md-pane h5, #md-pane h6 { font-size: 13px; margin: 10px 0 4px; }
+    #md-pane p { margin: 0 0 10px; }
+    #md-pane ul, #md-pane ol { margin: 0 0 10px; padding-left: 20px; }
+    #md-pane li { margin: 0 0 4px; }
+    #md-pane a { color: #0066cc; text-decoration: none; }
+    #md-pane a:hover { text-decoration: underline; }
+    #md-pane code {
+      background: #f0f0f0; padding: 1px 5px; border-radius: 3px;
+      font-size: 13px; color: #c7254e;
+    }
+    #md-pane pre {
+      background: #f6f8fa; padding: 12px; border-radius: 4px;
+      overflow-x: auto; margin: 0 0 10px; border: 1px solid #e1e4e8;
+    }
+    #md-pane pre code { background: none; padding: 0; display: block; }
+    #md-pane blockquote {
+      border-left: 3px solid #ddd; padding-left: 12px;
+      margin: 0 0 10px; color: #666;
+    }
+    #md-pane table { border-collapse: collapse; margin: 0 0 10px; width: 100%; }
+    #md-pane th, #md-pane td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; }
+    #md-pane th { background: #f6f8fa; }
+    #md-pane img { max-width: 100%; border-radius: 4px; }
+    #md-pane hr { border: none; border-top: 1px solid #ddd; margin: 16px 0; }
+    #md-pane .md-empty { color: #999; font-style: italic; }
+
+    /* ── Dark mode for md-pane ── */
+    @media (prefers-color-scheme: dark) {
+      #md-pane { background: #1e1e1e; color: #bbb; }
+      #md-pane h1 { color: #fff; }
+      #md-pane h2 { color: #ddd; border-bottom-color: #333; }
+      #md-pane h3 { color: #ccc; }
+      #md-pane h4, #md-pane h5, #md-pane h6 { color: #ccc; }
+      #md-pane a { color: #4ea1f5; }
+      #md-pane code { background: #2a2a2a; color: #e8b86d; }
+      #md-pane pre { background: #2a2a2a; border-color: #333; }
+      #md-pane blockquote { border-left-color: #444; color: #888; }
+      #md-pane th, #md-pane td { border-color: #444; }
+      #md-pane th { background: #2a2a2a; color: #ddd; }
+      #md-pane hr { border-top-color: #333; }
+      #md-pane .md-empty { color: #555; }
+    }
+    #placeholder {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #555;
+      font-size: 14px;
+    }
+
+    /* ── Dispatch Tab ── */
+    #dispatch-btn {
+      position: fixed; top: 12px; right: 16px; z-index: 50;
+      background: #2a2a2a; border: 1px solid #555; color: #ccc;
+      padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 13px;
+    }
+    #dispatch-btn:hover { background: #3a3a3a; }
+    #dispatch-view {
+      display: none; position: fixed; inset: 0; background: #1a1a1a;
+      overflow-y: auto; padding: 24px; z-index: 40;
+    }
+    #dispatch-view h2 { font-size: 15px; margin-bottom: 16px; color: #aaa; }
+    .dhost { margin-bottom: 20px; }
+    .dhost-header { font-size: 13px; font-weight: 600; color: #888; margin-bottom: 6px; }
+    .dexp { display: flex; align-items: center; gap: 12px; padding: 6px 10px;
+            border-radius: 5px; background: #242424; margin-bottom: 4px; font-size: 13px; }
+    .dexp-id { font-weight: 500; flex: 1; }
+    .dexp-status { font-size: 11px; padding: 2px 7px; border-radius: 3px; }
+    .s-running  { background: #1a3a1a; color: #6f6; }
+    .s-pending  { background: #333;    color: #aaa; }
+    .s-done     { background: #1a2a3a; color: #6af; }
+    .s-failed   { background: #3a2a1a; color: #fa6; }
+    .s-dead     { background: #3a1a1a; color: #f66; }
+    .s-retrying { background: #3a3a1a; color: #ff6; }
+    .dexp-time  { font-size: 11px; color: #666; }
+    .dispatch-section { margin-bottom: 24px; }
+    .dispatch-section h3 { font-size: 12px; color: #666; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+    #dispatch-refresh { font-size: 11px; color: #555; margin-top: 16px; }
+
+    /* ── Research tab ── */
+    #type-bar {
+      display: none;
+      background: #1e1e1e;
+      border-bottom: 1px solid #2a2a2a;
+      padding: 0 10px;
+      flex-shrink: 0;
+    }
+    .type-tab {
+      display: inline-block;
+      padding: 5px 14px;
+      font-size: 12px;
+      color: #666;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      user-select: none;
+    }
+    .type-tab:hover { color: #ccc; }
+    .type-tab.active { color: #fff; border-bottom-color: #0066cc; }
+
+    #research-pane {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+    #research-left {
+      width: 42%;
+      min-width: 180px;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #2a2a2a;
+    }
+    #research-resizer {
+      width: 5px;
+      cursor: col-resize;
+      background: #2a2a2a;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    #research-resizer:hover, #research-resizer.active { background: #0066cc; }
+    #research-right {
+      flex: 1;
+      min-width: 150px;
+      display: flex;
+      flex-direction: column;
+    }
+    .rs-pane-hdr {
+      background: #1e1e1e;
+      padding: 4px 8px;
+      font-size: 10px;
+      color: #555;
+      border-bottom: 1px solid #252525;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .rs-pane-hdr .rs-count { color: #444; }
+    .rs-spin {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      border: 1.5px solid #333;
+      border-top-color: #27c93f;
+      animation: rsspin 1s linear infinite;
+      vertical-align: middle;
+      margin-right: 4px;
+    }
+    @keyframes rsspin { to { transform: rotate(360deg); } }
+
+    #research-run-scroll { flex: 1; overflow-y: auto; }
+
+    /* Section labels */
+    .rs-sec-hdr {
+      padding: 2px 8px;
+      font-size: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      background: #111;
+      border-bottom: 1px solid #1e1e1e;
+    }
+    .rs-sec-hdr.running { color: #3a6a3a; }
+    .rs-sec-hdr.done    { color: #3a4a6a; }
+    .rs-sec-hdr.pending { color: #444; }
+
+    /* Compact experiment row */
+    .rs-row {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 8px;
+      border-bottom: 1px solid #1e1e1e;
+      cursor: pointer;
+      font-size: 10px;
+      min-height: 26px;
+      transition: background 0.1s;
+    }
+    .rs-row:hover { background: #222; }
+    .rs-row.rs-open-run  { background: #0d1e0d; border-left: 2px solid #27c93f; }
+    .rs-row.rs-open-done { background: #0d1420; border-left: 2px solid #4ea1f5; }
+    .rs-badge {
+      padding: 1px 4px;
+      border-radius: 2px;
+      font-size: 8px;
+      font-weight: 700;
+      min-width: 16px;
+      text-align: center;
+    }
+    .rs-badge.run  { background: #1a3a1a; color: #6f6; }
+    .rs-badge.done { background: #1a2a3a; color: #6af; }
+    .rs-badge.pend { background: #252525; color: #555; }
+    .rs-name { flex: 1; color: #ddd; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rs-host { color: #555; font-size: 9px; white-space: nowrap; }
+    .rs-time { color: #555; font-size: 9px; min-width: 38px; text-align: right; }
+    .rs-chev { color: #444; font-size: 10px; transition: transform 0.15s; }
+    .rs-chev.open { transform: rotate(90deg); color: #777; }
+
+    /* Expanded detail */
+    .rs-detail {
+      display: none;
+      background: #141414;
+      border-bottom: 1px solid #252525;
+      padding: 6px 10px;
+      font-size: 9px;
+      color: #777;
+    }
+    .rs-detail.show { display: block; }
+    .rs-kv-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2px 10px;
+      margin-bottom: 5px;
+    }
+    .rs-kv { display: flex; gap: 4px; }
+    .rs-kv .k { color: #444; }
+    .rs-kv .v { color: #999; }
+    .rs-metric {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 3px;
+    }
+    .rs-metric .lbl { color: #555; min-width: 55px; }
+    .rs-metric .val { color: #6f6; font-weight: 700; min-width: 30px; }
+    .rs-metric .prev { color: #444; min-width: 60px; }
+    .rs-bar-bg { flex: 1; background: #222; height: 3px; border-radius: 2px; }
+    .rs-bar-fill { background: #27c93f; height: 3px; border-radius: 2px; }
+    .rs-actions { display: flex; gap: 6px; margin-top: 5px; }
+    .rs-btn {
+      padding: 2px 7px;
+      border-radius: 3px;
+      border: 1px solid #333;
+      background: #1e1e1e;
+      color: #777;
+      cursor: pointer;
+      font-size: 9px;
+      font-family: monospace;
+    }
+    .rs-btn:hover { color: #ccc; border-color: #555; }
+    .rs-btn.wb { color: #4ea1f5; border-color: #1a3a5a; }
+
+    /* Results table */
+    #research-table-wrap { flex: 1; overflow: auto; padding: 4px; }
+    .rs-table { width: 100%; border-collapse: collapse; font-size: 9px; }
+    .rs-table th {
+      background: #1e1e1e; color: #555; padding: 3px 5px;
+      border: 1px solid #252525; text-align: center;
+      white-space: nowrap; font-weight: normal;
+      position: sticky; top: 0; z-index: 1;
+    }
+    .rs-table th.lh { text-align: left; min-width: 100px; }
+    .rs-table td { border: 1px solid #1e1e1e; padding: 3px 6px; text-align: center; }
+    .rs-cell-done { background: #0d1a2a; color: #4ea1f5; cursor: pointer; }
+    .rs-cell-done:hover { background: #1a2a3a; }
+    .rs-cell-run  { background: #0d1a0d; color: #6f6; cursor: pointer; }
+    .rs-cell-run  .rs-pulse { animation: rspulse 2s infinite; }
+    @keyframes rspulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+    .rs-cell-pend { color: #333; }
+    .rs-cell-meth { background: #1e1e1e; color: #777; text-align: left; padding: 3px 8px; }
+    .rs-cell-sect {
+      background: #141414; color: #444; text-align: left;
+      padding: 2px 8px; font-size: 8px;
+      text-transform: uppercase; letter-spacing: 0.8px;
+    }
+
+    /* Log file modal */
+    #rs-log-modal {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.75);
+      z-index: 200;
+      align-items: center; justify-content: center;
+    }
+    #rs-log-modal.show { display: flex; }
+    #rs-log-box {
+      background: #1e1e1e; border: 1px solid #444; border-radius: 8px;
+      width: 70%; max-width: 800px; max-height: 80vh;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    #rs-log-header {
+      background: #252525; padding: 8px 14px; font-size: 12px; color: #aaa;
+      display: flex; justify-content: space-between; border-bottom: 1px solid #333;
+    }
+    #rs-log-close { cursor: pointer; color: #666; font-size: 16px; line-height: 1; }
+    #rs-log-close:hover { color: #ccc; }
+    #rs-log-body {
+      flex: 1; overflow-y: auto; padding: 14px 18px;
+      font-size: 12px; color: #bbb; line-height: 1.6;
+      background: #1a1a1a;
+    }
+    #rs-log-body pre { white-space: pre-wrap; word-break: break-word; }
+  </style>
+</head>
+<body>
+  <button id="dispatch-btn" onclick="toggleDispatch()">⚡ Dispatch</button>
+  <div id="dispatch-view">
+    <h2>Experiment Dispatch</h2>
+    <div id="dispatch-content"></div>
+    <div id="dispatch-refresh"></div>
+  </div>
+
+<!-- Folder selection modal -->
+<div id="modal-overlay">
+  <div id="modal">
+    <h2>Select projects to display</h2>
+    <div id="project-list"></div>
+    <div id="modal-actions">
+      <button id="btn-all">Select all</button>
+      <button id="btn-none">None</button>
+      <button id="btn-confirm">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- Project tab bar -->
+<div id="tab-bar" style="display:none"></div>
+
+<!-- Type switcher (Paper / Research) — shown per project -->
+<div id="type-bar">
+  <span class="type-tab active" id="type-paper" onclick="switchType('paper')">📄 Paper</span>
+  <span class="type-tab" id="type-research" onclick="switchType('research')">🔬 Research</span>
+</div>
+
+<!-- Log file modal -->
+<div id="rs-log-modal">
+  <div id="rs-log-box">
+    <div id="rs-log-header">
+      <span id="rs-log-title">Experiment Log</span>
+      <span id="rs-log-close" onclick="closeLogModal()">✕</span>
+    </div>
+    <div id="rs-log-body"></div>
+  </div>
+</div>
+
+<!-- Content area -->
+<div id="viewer">
+  <div id="placeholder">No project selected</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+  // ─────────────────────────────────────────────
+  // PDF page position persistence
+  // Chrome's native PDF viewer fires postMessage with page changes.
+  // ─────────────────────────────────────────────
+  const PAGE_KEY = 'resultShower_pdfPage';
+
+  function loadPagePositions() {
+    try { return JSON.parse(localStorage.getItem(PAGE_KEY) || '{}'); }
+    catch { return {}; }
+  }
+
+  function savePage(folder, page) {
+    const pos = loadPagePositions();
+    pos[folder] = page;
+    localStorage.setItem(PAGE_KEY, JSON.stringify(pos));
+  }
+
+  function getSavedPage(folder) {
+    return loadPagePositions()[folder] || 1;
+  }
+
+  // Listen for postMessage from Chrome's native PDF viewer.
+  // It sends {type:'pagechange', pageNumber:N} or {type:'navigate', url:'#page=N'}
+  window.addEventListener('message', (e) => {
+    if (!activeProject) return;
+    const d = e.data;
+    if (!d || typeof d !== 'object') return;
+    if (d.type === 'pagechange' && d.pageNumber) {
+      savePage(activeProject.name, d.pageNumber);
+    } else if (d.type === 'navigate') {
+      const m = String(d.url || '').match(/#page=(\d+)/);
+      if (m) savePage(activeProject.name, parseInt(m[1]));
+    }
+  });
+
+  // Fallback: also poll iframe hash (works in some Chrome versions)
+  let pagePollInterval = null;
+  function startPagePolling() {
+    clearInterval(pagePollInterval);
+    pagePollInterval = setInterval(() => {
+      if (!activeProject) return;
+      try {
+        const iframe = document.querySelector('#pdf-pane iframe');
+        if (!iframe || !iframe.contentWindow) return;
+        const hash = iframe.contentWindow.location.hash;
+        const m = hash && hash.match(/#page=(\d+)/);
+        if (m) savePage(activeProject.name, parseInt(m[1]));
+      } catch(e) {}
+    }, 500);
+  }
+
+  // ─────────────────────────────────────────────
+  // State
+  // ─────────────────────────────────────────────
+  let allProjects = [];          // [{name, types}]
+  let selectedProjects = [];     // [{name, types}]
+  let activeProject = null;
+
+  // ─────────────────────────────────────────────
+  // Load projects
+  // ─────────────────────────────────────────────
+  async function loadProjects() {
+    const res = await fetch("/api/projects");
+    allProjects = await res.json();
+
+    const list = document.getElementById("project-list");
+    if (allProjects.length === 0) {
+      list.textContent = "No folders found in home directory.";
+      return;
+    }
+    const oneHourAgo = Date.now() / 1000 - 3600;
+    allProjects.forEach(({ name, types, mtime }) => {
+      const label = document.createElement("label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = name;
+      cb.checked = mtime >= oneHourAgo && types.includes('pdf');
+      const badge = types.length ? `<span style="color:#555;font-size:11px;margin-left:4px">[${types.join(", ")}]</span>` : "";
+      label.append(cb);
+      label.insertAdjacentHTML("beforeend", ` ${name}${badge}`);
+      list.appendChild(label);
+    });
+  }
+
+  // ─────────────────────────────────────────────
+  // Modal controls
+  // ─────────────────────────────────────────────
+  document.getElementById("btn-all").onclick = () => {
+    document.querySelectorAll("#project-list input").forEach(cb => cb.checked = true);
+  };
+  document.getElementById("btn-none").onclick = () => {
+    document.querySelectorAll("#project-list input").forEach(cb => cb.checked = false);
+  };
+  document.getElementById("btn-confirm").onclick = () => {
+    const checkedNames = new Set(
+      [...document.querySelectorAll("#project-list input:checked")].map(cb => cb.value)
+    );
+    selectedProjects = allProjects.filter(p => checkedNames.has(p.name));
+    document.getElementById("modal-overlay").style.display = "none";
+    renderProjectTabs();
+  };
+
+  // ─────────────────────────────────────────────
+  // Project tabs
+  // ─────────────────────────────────────────────
+  let dragSrcIndex = null;
+
+  function buildTabs() {
+    const tabBar = document.getElementById("tab-bar");
+    tabBar.innerHTML = "";
+    selectedProjects.forEach((project, i) => {
+      const tab = document.createElement("div");
+      tab.className = "tab";
+      if (project === activeProject) tab.classList.add("active");
+      tab.textContent = project.name;
+      tab.draggable = true;
+      tab.dataset.index = i;
+      tab.onclick = () => activateProject(project, tab);
+
+      tab.addEventListener("dragstart", (e) => {
+        dragSrcIndex = i;
+        tab.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+      });
+      tab.addEventListener("dragend", () => {
+        tab.classList.remove("dragging");
+        tabBar.querySelectorAll(".tab").forEach(t =>
+          t.classList.remove("drag-over-left", "drag-over-right"));
+      });
+      tab.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        const rect = tab.getBoundingClientRect();
+        const mid = rect.left + rect.width / 2;
+        tab.classList.remove("drag-over-left", "drag-over-right");
+        tab.classList.add(e.clientX < mid ? "drag-over-left" : "drag-over-right");
+      });
+      tab.addEventListener("dragleave", () => {
+        tab.classList.remove("drag-over-left", "drag-over-right");
+      });
+      tab.addEventListener("drop", (e) => {
+        e.preventDefault();
+        if (dragSrcIndex === null || dragSrcIndex === i) return;
+        const rect = tab.getBoundingClientRect();
+        const mid = rect.left + rect.width / 2;
+        const dropIndex = e.clientX < mid ? i : i + 1;
+        const [moved] = selectedProjects.splice(dragSrcIndex, 1);
+        selectedProjects.splice(dropIndex > dragSrcIndex ? dropIndex - 1 : dropIndex, 0, moved);
+        dragSrcIndex = null;
+        buildTabs();
+      });
+
+      tabBar.appendChild(tab);
+    });
+  }
+
+  function renderProjectTabs() {
+    const tabBar = document.getElementById("tab-bar");
+    tabBar.style.display = "flex";
+
+    if (selectedProjects.length === 0) {
+      tabBar.innerHTML = "";
+      showPlaceholder("No project selected");
+      return;
+    }
+
+    activeProject = selectedProjects[0];
+    buildTabs();
+    activateProject(selectedProjects[0], tabBar.firstChild);
+  }
+
+  function activateProject(project, tabEl) {
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    tabEl.classList.add("active");
+    activeProject = project;
+
+    if (typeof _onProjectActivated === "function") _onProjectActivated(project);
+    renderContent(project);
+  }
+
+  // ─────────────────────────────────────────────
+  // PDF selection persistence
+  // ─────────────────────────────────────────────
+  const PDF_SEL_KEY = 'resultShower_pdfSelection';
+
+  function loadPdfSelections() {
+    try { return JSON.parse(localStorage.getItem(PDF_SEL_KEY) || '{}'); }
+    catch { return {}; }
+  }
+
+  function savePdfSelection(folder, pdfPath) {
+    const sel = loadPdfSelections();
+    sel[folder] = pdfPath;
+    localStorage.setItem(PDF_SEL_KEY, JSON.stringify(sel));
+  }
+
+  function getSavedPdfSelection(folder) {
+    return loadPdfSelections()[folder] || null;
+  }
+
+  // ─────────────────────────────────────────────
+  // Render split pane: PDF left + markdown right
+  // ─────────────────────────────────────────────
+  async function renderContent(project) {
+    const viewer = document.getElementById("viewer");
+    viewer.innerHTML = "";
+    activeType = 'pdf';
+
+    if (!project.types.includes('pdf')) {
+      showPlaceholder(`No PDF found in ~/${project.name}`);
+      return;
+    }
+
+    // Fetch PDF list
+    let pdfList = [];
+    try {
+      const res = await fetch(`/api/pdfs/${encodeURIComponent(project.name)}`);
+      pdfList = await res.json();
+    } catch {}
+    if (pdfList.length === 0) {
+      showPlaceholder(`No PDF found in ~/${project.name}`);
+      return;
+    }
+
+    // Determine which PDF to show
+    const saved = getSavedPdfSelection(project.name);
+    let activePdf = pdfList.includes(saved) ? saved : pdfList[0];
+
+    // PDF pane
+    const pdfPane = document.createElement("div");
+    pdfPane.id = "pdf-pane";
+    const splitRatio = getSavedSplitRatio(project.name);
+    if (splitRatio) {
+      pdfPane.style.flex = "none";
+      pdfPane.style.width = (splitRatio * viewer.getBoundingClientRect().width) + "px";
+    }
+
+    // PDF selector (only show if multiple PDFs)
+    if (pdfList.length > 1) {
+      const selectorDiv = document.createElement("div");
+      selectorDiv.id = "pdf-selector";
+      const select = document.createElement("select");
+      pdfList.forEach(p => {
+        const opt = document.createElement("option");
+        opt.value = p;
+        opt.textContent = p;
+        if (p === activePdf) opt.selected = true;
+        select.appendChild(opt);
+      });
+      select.onchange = () => {
+        activePdf = select.value;
+        savePdfSelection(project.name, activePdf);
+        const savedPage = getSavedPage(project.name);
+        iframe.src = `/pdf/${encodeURIComponent(project.name)}/${activePdf.split('/').map(encodeURIComponent).join('/')}#page=${savedPage}`;
+      };
+      selectorDiv.appendChild(select);
+      pdfPane.appendChild(selectorDiv);
+    }
+
+    const iframe = document.createElement("iframe");
+    const savedPage = getSavedPage(project.name);
+    iframe.src = `/pdf/${encodeURIComponent(project.name)}/${activePdf.split('/').map(encodeURIComponent).join('/')}#page=${savedPage}`;
+    savePdfSelection(project.name, activePdf);
+    pdfPane.appendChild(iframe);
+    viewer.appendChild(pdfPane);
+    startPagePolling();
+
+    // Resizer
+    const resizer = document.createElement("div");
+    resizer.id = "resizer";
+    viewer.appendChild(resizer);
+    initResizer(resizer, pdfPane, project.name);
+
+    // Markdown pane
+    const mdPane = document.createElement("div");
+    mdPane.id = "md-pane";
+    mdPane.innerHTML = '<span class="md-empty">Loading...</span>';
+    viewer.appendChild(mdPane);
+
+    fetch(`/md/${encodeURIComponent(project.name)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.found) {
+          mdPane.innerHTML = marked.parse(data.content);
+        } else {
+          mdPane.innerHTML = '<span class="md-empty">progress.md not found</span>';
+        }
+      })
+      .catch(() => {
+        mdPane.innerHTML = '<span class="md-empty">Failed to load progress.md</span>';
+      });
+  }
+
+  // ─────────────────────────────────────────────
+  // Resizer drag logic
+  // ─────────────────────────────────────────────
+  const SPLIT_KEY = 'resultShower_splitPositions';
+
+  function loadSplitPositions() {
+    try { return JSON.parse(localStorage.getItem(SPLIT_KEY) || '{}'); }
+    catch { return {}; }
+  }
+
+  function saveSplitPosition(folder, pdfWidthPx) {
+    const positions = loadSplitPositions();
+    const viewer = document.getElementById("viewer");
+    // Store as percentage of viewer width for resolution independence
+    positions[folder] = pdfWidthPx / viewer.getBoundingClientRect().width;
+    localStorage.setItem(SPLIT_KEY, JSON.stringify(positions));
+  }
+
+  function getSavedSplitRatio(folder) {
+    return loadSplitPositions()[folder] || null;
+  }
+
+  function refreshMarkdown(folder) {
+    const mdPane = document.getElementById("md-pane");
+    if (!mdPane) return;
+    fetch(`/md/${encodeURIComponent(folder)}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.found) {
+          mdPane.innerHTML = marked.parse(data.content);
+        } else {
+          mdPane.innerHTML = '<span class="md-empty">progress.md not found</span>';
+        }
+      })
+      .catch(() => {
+        mdPane.innerHTML = '<span class="md-empty">Failed to load progress.md</span>';
+      });
+  }
+
+  function initResizer(resizer, pdfPane, folder) {
+    let startX, startWidth;
+    function onMouseDown(e) {
+      startX = e.clientX;
+      startWidth = pdfPane.getBoundingClientRect().width;
+      resizer.classList.add("active");
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      const iframe = pdfPane.querySelector("iframe");
+      if (iframe) iframe.style.pointerEvents = "none";
+    }
+    function onMouseMove(e) {
+      const newWidth = startWidth + (e.clientX - startX);
+      if (newWidth >= 200) {
+        pdfPane.style.flex = "none";
+        pdfPane.style.width = newWidth + "px";
+      }
+    }
+    function onMouseUp() {
+      resizer.classList.remove("active");
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      const iframe = pdfPane.querySelector("iframe");
+      if (iframe) iframe.style.pointerEvents = "";
+      saveSplitPosition(folder, pdfPane.getBoundingClientRect().width);
+      refreshMarkdown(folder);
+    }
+    resizer.addEventListener("mousedown", onMouseDown);
+  }
+
+  // ─────────────────────────────────────────────
+  // Helpers
+  // ─────────────────────────────────────────────
+  function showPlaceholder(text) {
+    const viewer = document.getElementById("viewer");
+    viewer.innerHTML = `<div id="placeholder">${text}</div>`;
+  }
+
+  loadProjects();
+
+  // ── Dispatch Tab ──────────────────────────────────────────────────────────
+  let dispatchOpen = false;
+  let dispatchTimer = null;
+
+  function esc(s) {
+    return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  }
+
+  function toggleDispatch() {
+    dispatchOpen = !dispatchOpen;
+    const view = document.getElementById("dispatch-view");
+    const btn = document.getElementById("dispatch-btn");
+    if (dispatchOpen) {
+      view.style.display = "block";
+      btn.textContent = "✕ Close";
+      loadDispatch();
+      clearInterval(dispatchTimer);
+      dispatchTimer = setInterval(loadDispatch, 30000);
+    } else {
+      view.style.display = "none";
+      btn.textContent = "⚡ Dispatch";
+      clearInterval(dispatchTimer);
+    }
+  }
+
+  function elapsed(started) {
+    if (!started) return "";
+    const s = Math.floor((Date.now() - new Date(started).getTime()) / 1000);
+    const h = String(Math.floor(s / 3600)).padStart(2, "0");
+    const m = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+    const sec = String(s % 60).padStart(2, "0");
+    return `${h}:${m}:${sec}`;
+  }
+
+  function statusBadge(s) {
+    return `<span class="dexp-status s-${s}">${s}</span>`;
+  }
+
+  async function loadDispatch() {
+    try {
+      const res = await fetch("/api/dispatch");
+      const projects = await res.json();
+      const content = document.getElementById("dispatch-content");
+      const refresh = document.getElementById("dispatch-refresh");
+      refresh.textContent = "Last updated: " + new Date().toLocaleTimeString();
+
+      if (projects.length === 0) {
+        content.innerHTML = "<p style='color:#555;font-size:13px'>No dispatch/state.json found in ~/*/dispatch/</p>";
+        return;
+      }
+
+      const byHost = {};
+      const queue = [];
+      const dead = [];
+
+      for (const proj of projects) {
+        for (const exp of (proj.experiments || [])) {
+          const e = { ...exp, _project: proj.project };
+          if (e.status === "pending")  queue.push(e);
+          else if (e.status === "dead") dead.push(e);
+          else {
+            const h = e.host || "unknown";
+            (byHost[h] = byHost[h] || []).push(e);
+          }
+        }
+      }
+
+      let html = "";
+
+      for (const [host, exps] of Object.entries(byHost)) {
+        html += `<div class="dhost">
+          <div class="dhost-header">🖥 ${esc(host)}</div>`;
+        for (const e of exps) {
+          const gpuStr = (e.gpu || []).join(",");
+          const t = e.status === "running" ? elapsed(e.started) : (e.finished ? "done" : "");
+          html += `<div class="dexp">
+            <span class="dexp-id">${esc(e.id)}</span>
+            ${statusBadge(e.status)}
+            ${gpuStr ? `<span class="dexp-time">GPU ${esc(gpuStr)}</span>` : ""}
+            ${t ? `<span class="dexp-time">${t}</span>` : ""}
+            ${e.retry_count ? `<span class="dexp-time" style="color:#fa6">retry:${e.retry_count}</span>` : ""}
+          </div>`;
+        }
+        html += "</div>";
+      }
+
+      if (queue.length) {
+        html += `<div class="dispatch-section"><h3>📋 Queue (${queue.length})</h3>`;
+        for (const e of queue) {
+          html += `<div class="dexp"><span class="dexp-id">${esc(e.id)}</span>${statusBadge("pending")}<span class="dexp-time">${esc(e._project)}</span></div>`;
+        }
+        html += "</div>";
+      }
+
+      if (dead.length) {
+        html += `<div class="dispatch-section"><h3>❌ Needs Attention (${dead.length})</h3>`;
+        for (const e of dead) {
+          html += `<div class="dexp"><span class="dexp-id">${esc(e.id)}</span>${statusBadge("dead")}<span class="dexp-time">${esc(e._project)} / ${esc(e.host || "?")}</span></div>`;
+        }
+        html += "</div>";
+      }
+
+      content.innerHTML = html;
+    } catch (err) {
+      document.getElementById("dispatch-content").innerHTML =
+        "<p style='color:#f66;font-size:13px'>⚠ Failed to load dispatch status</p>";
+      document.getElementById("dispatch-refresh").textContent =
+        "Error: " + err.message;
+    }
+  }
+
+  // ── Type switcher (Paper / Research) ─────────────────────────────────────
+  let activeType = 'paper';
+  let _researchPollTimer = null;
+  let _researchTickTimer = null;
+  let _researchData = null;       // last loaded data from /api/research/<project>
+  let _expandedRun = null;        // currently expanded exp_id
+
+  function showTypeBar(hasDispatch) {
+    const bar = document.getElementById("type-bar");
+    bar.style.display = hasDispatch ? "block" : "none";
+  }
+
+  function switchType(type) {
+    activeType = type;
+    document.getElementById("type-paper").classList.toggle("active", type === "paper");
+    document.getElementById("type-research").classList.toggle("active", type === "research");
+    stopResearchPolling();
+    if (type === "paper") {
+      renderContent(activeProject);
+    } else {
+      renderResearchView(activeProject.name);
+    }
+  }
+
+  // Hook into project activation — reset Research state and show/hide type bar
+  function _onProjectActivated(project) {
+    _expandedRun = null;
+    stopResearchPolling();
+    activeType = "paper";
+    document.getElementById("type-paper").classList.add("active");
+    document.getElementById("type-research").classList.remove("active");
+    // Show type bar only if project has a dispatch/state.json
+    fetch(`/api/research/${encodeURIComponent(project.name)}`)
+      .then(r => r.ok ? showTypeBar(true) : showTypeBar(false))
+      .catch(() => showTypeBar(false));
+  }
+
+  // ── Research view ─────────────────────────────────────────────────────────
+
+  function renderResearchView(projectName) {
+    const viewer = document.getElementById("viewer");
+    viewer.innerHTML = `
+      <div id="research-pane">
+        <div id="research-left">
+          <div class="rs-pane-hdr">
+            <span id="rs-hdr-title">Experiments</span>
+            <span class="rs-count" id="rs-summary"></span>
+            <button id="rs-refresh-btn" onclick="loadResearch(activeProject.name)" title="Refresh now"
+              style="margin-left:auto;background:none;border:none;color:#555;cursor:pointer;font-size:13px;padding:0 4px">↻</button>
+          </div>
+          <div id="research-run-scroll"></div>
+        </div>
+        <div id="research-resizer"></div>
+        <div id="research-right">
+          <div class="rs-pane-hdr">
+            <span id="rs-table-hdr">Results</span>
+            <span class="rs-count" id="rs-table-count"></span>
+          </div>
+          <div id="research-table-wrap"></div>
+        </div>
+      </div>`;
+
+    initRsResizer();
+    loadResearch(projectName);
+    startResearchPolling(projectName);
+  }
+
+  async function loadResearch(projectName) {
+    try {
+      const res = await fetch(`/api/research/${encodeURIComponent(projectName)}`);
+      if (!res.ok) return;
+      _researchData = await res.json();
+      renderRunList(_researchData.runs, _researchData.summary);
+      renderResultTable(_researchData.table);
+    } catch (e) {
+      const sumEl = document.getElementById("rs-summary");
+      if (sumEl) sumEl.textContent = "⚠ server unreachable";
+    }
+  }
+
+  function startResearchPolling(projectName) {
+    stopResearchPolling();
+    _researchPollTimer = setInterval(() => loadResearch(projectName), 10000);
+    _researchTickTimer = setInterval(updateElapsedTimes, 1000);
+  }
+
+  function stopResearchPolling() {
+    clearInterval(_researchPollTimer);
+    clearInterval(_researchTickTimer);
+    _researchPollTimer = null;
+    _researchTickTimer = null;
+  }
+
+  // ── Run list ──────────────────────────────────────────────────────────────
+
+  function renderRunList(runs, summary) {
+    const scroll = document.getElementById("research-run-scroll");
+    if (!scroll) return;
+
+    // Summary header
+    const sumEl = document.getElementById("rs-summary");
+    if (sumEl && summary) {
+      const anyRunning = summary.running > 0;
+      const offlinePart = summary.offline_queue > 0
+        ? ` · <span title="Awaiting sync from offline cluster" style="color:#e8a838">⬆ ${summary.offline_queue} offline</span>`
+        : "";
+      sumEl.innerHTML = (anyRunning ? '<span class="rs-spin"></span>' : "") +
+        `${summary.running} running · ${summary.done} done · ${summary.pending} pending${offlinePart}`;
+    }
+
+    const running = runs.filter(r => r.status === "running");
+    const done    = runs.filter(r => r.status === "done");
+    const pending = runs.filter(r => r.status === "pending");
+
+    let html = "";
+    if (running.length) {
+      html += `<div class="rs-sec-hdr running">● Running</div>`;
+      running.forEach(r => { html += buildRunRow(r); });
+    }
+    if (done.length) {
+      html += `<div class="rs-sec-hdr done">✓ Done</div>`;
+      done.forEach(r => { html += buildRunRow(r); });
+    }
+    if (pending.length) {
+      html += `<div class="rs-sec-hdr pending">○ Pending</div>`;
+      pending.forEach(r => { html += buildRunRow(r); });
+    }
+    if (!html) html = `<div style="padding:10px;font-size:11px;color:#444">No experiments yet.</div>`;
+    scroll.innerHTML = html;
+  }
+
+  function buildRunRow(run) {
+    const isOpen    = _expandedRun === run.exp_id;
+    const isRunning = run.status === "running";
+    const isDone    = run.status === "done";
+
+    let badgeClass = "pend", badgeText = "—";
+    if (isRunning) { badgeClass = "run"; badgeText = "▶"; }
+    if (isDone)    { badgeClass = "done"; badgeText = "✓"; }
+
+    let rowClass = isOpen ? (isRunning ? "rs-open-run" : "rs-open-done") : "";
+    const shortGpu = (run.gpu || "").replace(/NVIDIA /i, "").split(" ").slice(0,2).join(" ");
+    const hostStr  = run.host ? `${run.host.split(".")[0]}·${shortGpu || "GPU"}` : "";
+
+    const timeStr = isRunning
+      ? `<span class="rs-elapsed" data-started="${esc(run.started)}"></span>`
+      : (isDone && run.started && run.finished ? fmtDuration(run.started, run.finished) : "");
+
+    let expandHtml = "";
+    if (isOpen) {
+      expandHtml = buildExpandDetail(run);
+    }
+
+    return `
+      <div class="rs-row ${rowClass}" data-exp="${esc(run.exp_id)}" onclick="toggleExpand('${esc(run.exp_id)}')">
+        <span class="rs-badge ${badgeClass}">${badgeText}</span>
+        <span class="rs-name">${esc(run.exp_id)}</span>
+        <span class="rs-host">${esc(hostStr)}</span>
+        <span class="rs-time">${timeStr}</span>
+        <span class="rs-chev ${isOpen ? 'open' : ''}">›</span>
+      </div>
+      <div class="rs-detail ${isOpen ? 'show' : ''}" id="rs-detail-${esc(run.exp_id)}">
+        ${expandHtml}
+      </div>`;
+  }
+
+  function buildExpandDetail(run) {
+    const kv = (k, v) => v ? `<div class="rs-kv"><span class="k">${k}:</span><span class="v">${esc(String(v))}</span></div>` : "";
+    const elapsedStr = (() => {
+      const ref = run.status === "done" ? run.finished : null;
+      const start = run.started;
+      if (!start) return "";
+      const ms = (ref ? new Date(ref) : new Date()) - new Date(start);
+      if (isNaN(ms) || ms < 0) return "";
+      const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+      return h ? `${h}h ${m}m` : `${m}m`;
+    })();
+    const kvGrid = `<div class="rs-kv-grid">
+      ${kv("host", run.host)}${kv("gpu", run.gpu)}${kv("pid", run.pid)}
+      ${kv("conda", run.conda)}${kv("cuda", run.cuda)}${kv("torch", run.torch)}
+      ${kv("elapsed", elapsedStr)}
+    </div>`;
+
+    let metrics = "";
+    const step = run.latest_step || {};
+    if (run.status === "running" && Object.keys(step).length) {
+      for (const [k, v] of Object.entries(step)) {
+        if (k === "timestamp" || k === "step") continue;
+        metrics += `<div class="rs-metric">
+          <span class="lbl">${esc(k)}:</span>
+          <span class="val">${typeof v === "number" ? v.toFixed(4) : esc(String(v))}</span>
+        </div>`;
+      }
+      if (step.step !== undefined) {
+        const total = run.config?.total_steps;
+        const pct   = total ? Math.round(step.step / total * 100) : null;
+        metrics += `<div class="rs-metric">
+          <span class="lbl">step:</span>
+          <span class="val">${step.step}</span>
+          ${total ? `<span class="prev">/ ${total} (${pct}%)</span>
+          <div class="rs-bar-bg"><div class="rs-bar-fill" style="width:${pct}%"></div></div>` : ""}
+        </div>`;
+      }
+    }
+    if (run.status === "done" && run.metrics && Object.keys(run.metrics).length) {
+      for (const [k, v] of Object.entries(run.metrics)) {
+        metrics += `<div class="rs-metric">
+          <span class="lbl">${esc(k.replace("final_",""))}:</span>
+          <span class="val">${typeof v === "number" ? v.toFixed(4) : esc(String(v))}</span>
+        </div>`;
+      }
+    }
+
+    const wandbId   = run.config?.wandb_run_id;
+    const ckptDir   = run.config?.checkpoint_dir;
+    const wandbBtn  = wandbId
+      ? `<button class="rs-btn wb" onclick="event.stopPropagation();window.open('https://wandb.ai/runs/${esc(wandbId)}','_blank')">↗ WandB</button>`
+      : "";
+    const logBtn    = `<button class="rs-btn" onclick="event.stopPropagation();openLogModal('${esc(run.exp_id)}')">📋 log file</button>`;
+    const ckptBtn   = ckptDir
+      ? `<button class="rs-btn" title="${esc(ckptDir)}" onclick="event.stopPropagation()">📂 checkpoint</button>`
+      : "";
+
+    return `${kvGrid}${metrics}<div class="rs-actions">${wandbBtn}${logBtn}${ckptBtn}</div>`;
+  }
+
+  function toggleExpand(expId) {
+    _expandedRun = _expandedRun === expId ? null : expId;
+    if (_researchData) renderRunList(_researchData.runs, _researchData.summary);
+  }
+
+  function updateElapsedTimes() {
+    document.querySelectorAll(".rs-elapsed").forEach(el => {
+      const started = el.dataset.started;
+      if (started) el.textContent = elapsed(started);
+    });
+  }
+
+  function fmtDuration(started, finished) {
+    if (!started || !finished) return "";
+    const s = Math.round((new Date(finished) - new Date(started)) / 1000);
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return h ? `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`
+             : `${m}:${String(sec).padStart(2,"0")}`;
+  }
+
+  // ── Results table ──────────────────────────────────────────────────────────
+
+  function renderResultTable(table) {
+    const wrap = document.getElementById("research-table-wrap");
+    const hdr  = document.getElementById("rs-table-hdr");
+    const cnt  = document.getElementById("rs-table-count");
+    if (!wrap || !table) return;
+
+    if (hdr) hdr.textContent = `Results — ${table.primary_metric || "metric"} ↓`;
+    if (cnt) cnt.textContent = `${table.filled} / ${table.total} filled`;
+
+    if (!table.rows || !table.rows.length) {
+      wrap.innerHTML = `<div style="padding:12px;font-size:11px;color:#444">No results yet — experiments will appear here as they finish.</div>`;
+      return;
+    }
+
+    const datasets = table.datasets || [];
+    // Flat-list mode when only 1 dataset or 1 method — matrix would be a single cell
+    const useFlat = datasets.length <= 1 || table.rows.length <= 1;
+
+    if (useFlat) {
+      // Show all finished runs as a flat table: exp_id | metrics...
+      const runs = (_researchData && _researchData.runs) || [];
+      const doneRuns = runs.filter(r => r.status === "done" || r.status === "running");
+      if (!doneRuns.length) {
+        wrap.innerHTML = `<div style="padding:12px;font-size:11px;color:#444">No results yet — experiments will appear here as they finish.</div>`;
+        return;
+      }
+      // For each run pick the best available values: done→metrics, running→latest_step
+      const getVals = r => r.status === "done" ? (r.metrics || {}) : (r.latest_step || {});
+      const metricKeys = [...new Set(doneRuns.flatMap(r => Object.keys(getVals(r))))];
+      let html = `<table class="rs-table"><thead><tr>
+        <th class="lh">Experiment</th>
+        ${metricKeys.map(k => `<th>${esc(k.replace(/^final_/, ""))}</th>`).join("")}
+      </tr></thead><tbody>`;
+      for (const r of doneRuns) {
+        const isRunning = r.status === "running";
+        const badge = isRunning ? `<span class="rs-pulse">🔄</span> ` : "";
+        const vals = getVals(r);
+        html += `<tr onclick="highlightRun('${esc(r.exp_id)}')" style="cursor:pointer">
+          <td class="rs-cell-meth">${badge}${esc(r.exp_id)}</td>`;
+        for (const k of metricKeys) {
+          const v = vals[k];
+          if (v != null) {
+            const cls = isRunning ? "rs-cell-run" : "rs-cell-done";
+            html += `<td class="${cls}">${typeof v === "number" ? v.toFixed(3) : esc(String(v))}</td>`;
+          } else {
+            html += `<td class="rs-cell-pend">—</td>`;
+          }
+        }
+        html += `</tr>`;
+      }
+      html += `</tbody></table>`;
+      wrap.innerHTML = html;
+      return;
+    }
+
+    let html = `<table class="rs-table"><thead><tr>
+      <th class="lh">Method</th>
+      ${datasets.map(d => `<th>${esc(d)}</th>`).join("")}
+    </tr></thead><tbody>`;
+
+    let lastGroup = null;
+    for (const row of table.rows) {
+      if (row.group !== lastGroup) {
+        const label = row.label || row.group;
+        html += `<tr><td class="rs-cell-sect" colspan="${datasets.length + 1}">${esc(label)}</td></tr>`;
+        lastGroup = row.group;
+      }
+      html += `<tr><td class="rs-cell-meth">${esc(row.method)}</td>`;
+      for (const d of datasets) {
+        const cell = (table.cells || {})[`${row.method}|${d}`];
+        if (!cell) {
+          html += `<td class="rs-cell-pend">—</td>`;
+        } else if (cell.status === "done") {
+          const v = cell.value !== null ? Number(cell.value).toFixed(3) : "—";
+          html += `<td class="rs-cell-done" title="${esc(cell.exp_id)}" onclick="highlightRun('${esc(cell.exp_id)}')">${v}</td>`;
+        } else if (cell.status === "running") {
+          html += `<td class="rs-cell-run" title="${esc(cell.exp_id)}" onclick="highlightRun('${esc(cell.exp_id)}')"><span class="rs-pulse">🔄</span></td>`;
+        } else {
+          html += `<td class="rs-cell-pend">—</td>`;
+        }
+      }
+      html += `</tr>`;
+    }
+    html += `</tbody></table>`;
+    wrap.innerHTML = html;
+  }
+
+  function highlightRun(expId) {
+    _expandedRun = expId;
+    if (_researchData) renderRunList(_researchData.runs, _researchData.summary);
+    // Scroll after paint so the row is guaranteed to exist in DOM
+    requestAnimationFrame(() => {
+      const row = document.querySelector(`.rs-row[data-exp="${CSS.escape(expId)}"]`);
+      if (row) row.scrollIntoView({behavior: "smooth", block: "nearest"});
+    });
+  }
+
+  // ── Log file modal ─────────────────────────────────────────────────────────
+
+  async function openLogModal(expId) {
+    if (!activeProject) return;
+    document.getElementById("rs-log-title").textContent = `experiments/logs/${expId}.md`;
+    document.getElementById("rs-log-body").innerHTML = "Loading...";
+    document.getElementById("rs-log-modal").classList.add("show");
+    try {
+      const res = await fetch(`/api/logfile/${encodeURIComponent(activeProject.name)}/${encodeURIComponent(expId)}`);
+      const data = await res.json();
+      document.getElementById("rs-log-body").innerHTML = data.found
+        ? `<pre>${esc(data.content)}</pre>`
+        : `<span style="color:#555">Log file not found: experiments/logs/${esc(expId)}.md</span>`;
+    } catch (e) {
+      document.getElementById("rs-log-body").innerHTML = `<span style="color:#f66">Failed to load: ${esc(String(e))}</span>`;
+    }
+  }
+
+  function closeLogModal() {
+    document.getElementById("rs-log-modal").classList.remove("show");
+  }
+
+  // Close modal on overlay click
+  document.getElementById("rs-log-modal").addEventListener("click", function(e) {
+    if (e.target === this) closeLogModal();
+  });
+
+  // ── Research pane resizer ──────────────────────────────────────────────────
+
+  function initRsResizer() {
+    const resizer = document.getElementById("research-resizer");
+    const left    = document.getElementById("research-left");
+    if (!resizer || !left) return;
+    let startX, startW;
+    resizer.addEventListener("mousedown", e => {
+      startX = e.clientX; startW = left.getBoundingClientRect().width;
+      resizer.classList.add("active");
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    });
+    function onMove(e) {
+      const w = startW + (e.clientX - startX);
+      if (w >= 150) left.style.width = w + "px";
+    }
+    function onUp() {
+      resizer.classList.remove("active");
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+  }
+</script>
+</body>
+</html>
