@@ -1,53 +1,73 @@
 /**
- * paper.js — Results table + PDF viewer.
+ * paper.js — Paper browser: lists all PDFs + inline viewer.
  */
-
-import { renderResults } from './results.js';
 
 export async function renderPaper(container, state) {
   container.style.padding = '0';
-  // Top section: results table
-  const resultsWrap = document.createElement('div');
-  resultsWrap.style.cssText = 'padding:16px;border-bottom:1px solid var(--border)';
-  container.innerHTML = '';
-  container.appendChild(resultsWrap);
-  await renderResults(resultsWrap, state);
-
-  // Bottom section: PDF viewer
-  const pdfWrap = document.createElement('div');
-  pdfWrap.style.cssText = 'display:flex;flex-direction:column;flex:1;min-height:0';
-  container.appendChild(pdfWrap);
+  container.innerHTML = '<div class="loading">Loading paper…</div>';
 
   let pdfs = [];
   try {
-    pdfs = await fetch(`/api/pdfs/${encodeURIComponent(state.project)}`).then(r => r.json());
+    const res = await fetch(`/api/pdfs/${encodeURIComponent(state.project)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    pdfs = await res.json();
   } catch (_) {}
 
-  if (!pdfs.length) {
-    pdfWrap.innerHTML = `<div style="padding:16px;color:var(--text-dim);font-size:12px">No PDFs found in this project folder.</div>`;
+  // Prefer main.pdf; fall back to first PDF found
+  const main = pdfs.find(p => /\bmain\.pdf$/i.test(p)) || pdfs[0];
+
+  if (!main) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">📄</div>
+        <p>No PDF found in <code>${escHtml(state.project)}</code>.</p>
+        <p style="margin-top:6px;font-size:11px;color:var(--text-dim)">Expected: paper/main.pdf</p>
+      </div>`;
     return;
   }
 
-  const options = pdfs.map((p, i) =>
-    `<option value="${escHtml(p)}"${i === 0 ? ' selected' : ''}>${escHtml(p)}</option>`
-  ).join('');
+  const url = `/pdf/${encodeURIComponent(state.project)}/${encodeURIComponent(main)}`;
+  container.innerHTML = `
+    <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);background:var(--sidebar);flex-shrink:0">
+        <span style="font-size:14px">📄</span>
+        <span style="font-size:12px;font-weight:600;flex:1">Main Paper</span>
+        <a href="${escHtml(url)}" target="_blank"
+           style="font-size:11px;color:var(--accent);text-decoration:none;padding:3px 8px;border:1px solid var(--border);border-radius:4px;white-space:nowrap">
+          Open ↗
+        </a>
+      </div>
+      <iframe src="${escHtml(url)}" style="flex:1;border:none;min-height:0" allowfullscreen></iframe>
+    </div>`;
+}
 
-  const projectEnc = encodeURIComponent(state.project);
-  const firstUrl = `/pdf/${projectEnc}/${encodeURIComponent(pdfs[0])}`;
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-  pdfWrap.innerHTML = `
-    <div class="pdf-select" style="padding:12px 16px;border-bottom:1px solid var(--border);background:var(--sidebar)">
-      <label style="font-size:12px;color:var(--text-dim)">PDF:</label>
-      <select id="pdf-picker">${options}</select>
-    </div>
-    <iframe id="pdf-frame" src="${escHtml(firstUrl)}" style="flex:1;min-height:600px"></iframe>`;
+function formatPdfLabel(path) {
+  const name = path.split('/').pop().replace(/\.pdf$/i, '');
+  // Pretty-print common patterns
+  if (name === 'main')       return 'Main Paper';
+  if (name === 'supplement') return 'Supplementary';
+  if (name === 'appendix')   return 'Appendix';
+  if (name === 'rebuttal')   return 'Rebuttal';
+  if (name === 'poster')     return 'Poster';
+  if (name === 'slides')     return 'Slides';
+  // snake_case / kebab-case → Title Case
+  return name.replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
 
-  pdfWrap.querySelector('#pdf-picker').onchange = (e) => {
-    const url = `/pdf/${projectEnc}/${encodeURIComponent(e.target.value)}`;
-    pdfWrap.querySelector('#pdf-frame').src = url;
-  };
+function pdfIcon(path) {
+  const name = path.toLowerCase();
+  if (name.includes('main'))       return '📄';
+  if (name.includes('supplement') || name.includes('appendix')) return '📎';
+  if (name.includes('rebuttal'))   return '💬';
+  if (name.includes('poster'))     return '🖼';
+  if (name.includes('slides'))     return '📊';
+  if (name.includes('review'))     return '🔍';
+  return '📃';
 }
 
 function escHtml(s) {
-  return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  return String(s || '').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }

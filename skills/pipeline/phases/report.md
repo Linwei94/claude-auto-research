@@ -1,5 +1,10 @@
 # Experiment-Only Mode: Research Report
 
+⚠️ **Research-only mode only.** Before starting, verify: `grep "mode: research-only" config/config.md`.
+If `mode: paper`, do NOT run this phase — proceed to Phase 10 (writing.md) instead.
+
+---
+
 **Triggered when:** Phase 9 Go/No-Go gate passes AND `config/config.md` has `mode: research-only`. This phase is NOT called after pilot completion or mid-pipeline — only after the full Phase 9 analysis completes. If Pilot 1 failed and the pipeline rolled back in Phase 5, Phase 9.5 is never reached. The verdict rules in this file assume all pilots completed and Phase 9 analysis has been run.
 
 Goal: idea iterates → pilots pass → full experiments → Phase 9 analysis → comprehensive markdown report. No LaTeX, no venue formatting.
@@ -10,9 +15,11 @@ Use this mode when user says: "不用写文章", "只要实验结果", "出个�
 
 ## When to Switch to This Mode
 
-After Phase 9 (Analysis) passes the Go/No-Go gate, instead of proceeding to Phase 10 (Writing), generate a research report.
+Two valid entry paths:
 
-Also valid to stop after Phase 5 pilots: if the goal was "verify this idea works", a pilot report suffices.
+**Path A (Pilot Report)**: Reviewer Mode B verdict is CONTINUE AND `mode: research-only` → generate pilot research report (sections 1–5 only, mark document as 'Preliminary — Pilot Only').
+
+**Path B (Full Report)**: Phase 9 Go gate passes AND `mode: research-only` → generate full research report (all sections).
 
 ---
 
@@ -26,7 +33,11 @@ Also valid to stop after Phase 5 pilots: if the goal was "verify this idea works
 - `experiments/logs/*.md` (all experiment logs)
 - wandb project dashboard (for figures)
 
-### Output: `report/research_report.md`
+**IMPORTANT — Figures for paper**: Do NOT use wandb dashboard screenshots as paper figures. All figures must be generated programmatically from `experiments/results/all_results.csv` using matplotlib/seaborn scripts (see `writing.md` §10.4 Subagent 2). Screenshots are acceptable for internal reports only. Before transitioning to full paper mode, run Reviewer Agent Mode G to verify all figures come from CSV data.
+
+### Output: `report/research_report_round_<N>.md`
+
+Where `<N>` is the current idea round number from `config/config.md`. Never overwrite a previous round's report — increment N for each new round.
 
 Generate a comprehensive markdown document:
 
@@ -150,6 +161,9 @@ Choose one:
 - [ ] **Continue iterating** — idea works but needs improvement. → Phase 5
 - [ ] **Pivot** — fundamental issue found. → Phase 1 rollback
 - [ ] **Done** — algorithm validated, no paper planned.
+- [ ] **Archive** — results are sufficient for internal record; store key findings in project wiki, close project. (No Phase 10 needed)
+
+**Auto-recommendation based on verdict**: If ✅ Algorithm validated → check 'Proceed to full paper (if mode changes to paper)'. If ⚠️ Partial success → check 'Continue iterating (more experiments or ablations)'. If ❌ Does not work → check 'Pivot idea'. This auto-recommendation is a starting point; override if needed.
 
 ---
 
@@ -169,8 +183,8 @@ Choose one:
 ### Commit + Notify
 
 ```bash
-git add report/research_report.md
-git commit -m "report: research report round N — [verdict]"
+git add report/research_report_round_<N>.md
+git commit -m "report: research report round <N> — [verdict]"
 ```
 
 Notify-telegram: include verdict, key metric (best result), and link to wandb project.

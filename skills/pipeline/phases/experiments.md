@@ -4,6 +4,7 @@
 - `plan/proposal.md`
 - `experiments/results/pilot_synthesis.md`
 - `config/config.md`
+- `plan/experiment_design_debate.md` (from Phase 7 debate — rationale for experiment design choices)
 
 ## Outputs
 - `plan/experiment_plan.md`
@@ -84,6 +85,13 @@ Re-check GPU availability: `gnvitop --agent`. Mark lower-priority experiments op
 
 Commit + notify-telegram.
 
+**Phase 6 completion** — send to Pipeline Lead via SendMessage:
+```
+Phase 6 complete. Experiment plan ready at plan/experiment_plan.md. [N] experiments, ~[X] GPU-hours.
+Summary: [key design decisions, e.g. '3 seeds × 5 datasets × 3 baselines = 45 experiments']
+Ready for Phase 7 (experiment design debate).
+```
+
 ---
 
 ## Phase 7: Experiment Design Debate
@@ -92,7 +100,25 @@ Commit + notify-telegram.
 
 ### 7.1: Fetch Venue Review Criteria
 
-Search for the actual review form: `"[venue] [year] review form reviewer guidelines"`. Extract scoring dimensions, scale, mandatory checklists, known rejection patterns. Save to `references/review_criteria.md`.
+Search for the actual review form: `"[venue] [year] review form reviewer guidelines"`. Extract scoring dimensions, scale, mandatory checklists, known rejection patterns. **Overwrite** `references/review_criteria.md` (a stub was created in Phase 0; replace it with actual criteria now).
+
+**Required format:**
+```markdown
+# [Venue] [Year] Review Criteria
+
+## Scoring Dimensions
+| Dimension | Scale | Description |
+|-----------|-------|-------------|
+| Technical Quality | 1–10 | ... |
+
+## Mandatory Checklists
+- [ ] Reproducibility: ...
+
+## Known Rejection Patterns
+- Insufficient baselines: ...
+```
+
+**Fallback if search returns no results**: Use venue-specific defaults from `phases/writing.md` §10.1 (venue characteristics). Populate with generic ML conference criteria: Technical Quality (1-10), Novelty (1-10), Significance (1-10), Clarity (1-10), and note "Fetched from writing.md defaults — update when official form found."
 
 ### 7.2: 4-Agent Debate
 
@@ -105,12 +131,9 @@ Spawn in parallel. Each reads `plan/experiment_plan.md` + `plan/proposal.md` + `
 | **The Reproducibility Hawk** | Can someone reproduce Table 1 from the paper alone? Are all hyperparameters specified? |
 | **The Narrative Enforcer** | Does every claim have a supporting experiment? Is the story coherent end-to-end? |
 
-Each agent produces: scores per venue dimension + critical gaps + nice-to-haves + verdict (PASS/REVISE/REJECT).
+Each agent produces: structured findings per their review angle + critical additions required + verdict (PASS/REVISE/REJECT).
 
-**Passing threshold:**
-- NeurIPS/ICML: avg overall ≥5/9
-- ICLR: avg overall ≥5/10
-- CVPR/ECCV: no agent gives Reject, ≤1 gives Weak Reject
+**Passing threshold**: See `agents/experiment_design_debate.md` §Passing threshold for the canonical verdict-based rules. Agents produce PASS/REVISE/REJECT verdicts (not numeric scores) — do not apply numeric thresholds.
 
 **Auto-decision:**
 - All PASS → Phase 8
@@ -131,9 +154,13 @@ Copy this template to `experiments/utils/checkpoint.py` at Phase 8 start:
 
 ```python
 import torch
+import wandb
 from pathlib import Path
 
+# ── Local checkpoint (for mid-training resume) ────────────────────────────────
+
 def save_checkpoint(checkpoint_dir, step, model, optimizer, metrics):
+    """Save a rotating local checkpoint (keeps last 3). Call every N steps."""
     path = Path(checkpoint_dir)
     path.mkdir(parents=True, exist_ok=True)
     torch.save({
@@ -142,10 +169,12 @@ def save_checkpoint(checkpoint_dir, step, model, optimizer, metrics):
         'optimizer': optimizer.state_dict(),
         'metrics': metrics,
     }, path / f'ckpt_{step:06d}.pt')
+    # Keep only the 3 most recent (saves disk)
     for old in sorted(path.glob('ckpt_*.pt'))[:-3]:
         old.unlink()
 
 def load_checkpoint(checkpoint_dir, model, optimizer=None):
+    """Resume from the latest local checkpoint."""
     ckpts = sorted(Path(checkpoint_dir).glob('ckpt_*.pt'))
     if not ckpts:
         return 0, {}
@@ -154,13 +183,57 @@ def load_checkpoint(checkpoint_dir, model, optimizer=None):
     if optimizer:
         optimizer.load_state_dict(ckpt['optimizer'])
     return ckpt['step'], ckpt['metrics']
+
+# ── wandb Artifact upload (for permanent traceability) ────────────────────────
+
+def upload_best_checkpoint(run, exp_id: str, checkpoint_dir: str, best_metrics: dict) -> str:
+    """Upload best checkpoint as wandb Artifact. Returns qualified name or "" on failure."""
+    path = Path(checkpoint_dir)
+    ckpts = sorted(path.glob('ckpt_*.pt'))
+    if not ckpts:
+        print(f"[checkpoint] WARNING: no checkpoint files found in {checkpoint_dir}. Artifact NOT uploaded.")
+        return ""
+
+    best_ckpt = ckpts[-1]  # last saved = best
+
+    artifact = wandb.Artifact(
+        name=f"{exp_id}-best",
+        type="model",
+        description=f"Best checkpoint for {exp_id}",
+        metadata={
+            "exp_id":   exp_id,
+            "step":     best_ckpt.stem.replace("ckpt_", ""),
+            **best_metrics,
+        },
+    )
+    artifact.add_file(str(best_ckpt), name="best.pt")
+
+    try:
+        run.log_artifact(artifact)
+        artifact.wait()
+        qualified = artifact.qualified_name
+        print(f"[checkpoint] Artifact uploaded: {qualified}")
+        return qualified
+    except Exception as e:
+        print(f"[checkpoint] WARNING: artifact upload failed: {e}. Continuing without artifact.")
+        return ""
 ```
 
-Every training script MUST accept `--checkpoint-dir` and `--resume` and call these.
+Every training script MUST accept `--checkpoint-dir` and `--resume` and call these functions.
 
-**Checkpoint directory sync policy**: `checkpoint_dir` paths are **local to the executing machine** — do NOT include them in `multi-machine-sync.md` rsync rules. Checkpoints are large and machine-specific. Only the final `result_file` (CSV) is synced back to the central machine. If an experiment needs to resume on a *different* machine (e.g., original machine failed), you must first manually copy the checkpoint directory to the new machine before re-dispatching.
+**Checkpoint lifecycle:**
+1. During training: `save_checkpoint()` every N steps (keeps last 3 locally for resume)
+2. End of training: `upload_best_checkpoint()` → uploads to wandb, returns `artifact_uri`
+3. Write `artifact_uri` back to `dispatch/<EXP_ID>.status.json` as `wandb_artifact`
+4. **Only after** `wandb_artifact` is confirmed non-empty: delete local checkpoint dir
 
-**Checkpoint cleanup**: After an experiment reaches `status: "done"` or `status: "failed"` (all retries exhausted), delete its `checkpoint_dir` to conserve disk space: `ssh <host> "rm -rf <checkpoint_dir>"`. Only keep checkpoints for experiments with `status: "running"` or `status: "pending"` (may still need resume). Log the cleanup in `experiments/logs/<exp_id>.md`.
+**Checkpoint directory sync policy**: `checkpoint_dir` paths are local to the executing machine — do NOT rsync across machines. Copy manually before re-dispatching to a different host.
+
+**Checkpoint cleanup (artifact-gated)**: After `status: "done"` AND `wandb_artifact` in `dispatch/<EXP_ID>.status.json` is confirmed non-empty:
+```bash
+ssh <HOST> "rm -rf <REMOTE_CHECKPOINT_DIR>"
+```
+If `wandb_artifact` is empty (upload failed): do NOT delete local checkpoint — the weights may be the only copy. Log a warning in `experiments/logs/<EXP_ID>.md` and escalate to Pipeline Lead.
 
 For non-PyTorch evaluation scripts: write `partial_results.json` after each dataset/seed, skip completed entries on restart.
 
@@ -202,7 +275,7 @@ def early_stop_check(state_path="dispatch/state.json", results_dir="experiments/
         for exp in done:
             try:
                 exp_rows = all_df[(all_df["exp_id"] == exp["id"]) & (all_df["metric"] == metric)]
-                our_val  = exp_rows[exp_rows["group"].isin(["main", "proposed"])]["value"].mean()
+                our_val  = exp_rows[exp_rows["group"].isin(["main"])]["value"].mean()  # CSV value is "main"; displayed as "Proposed" in dashboard
                 if pd.isna(our_val):
                     continue
                 # Best baseline across all experiments on the same dataset(s)
@@ -247,6 +320,8 @@ if __name__ == "__main__":
 
 Every experiment script MUST init wandb. Required pattern:
 
+**wandb_run_id resume contract**: Before calling `wandb.init()`, read `wandb_run_id` from `dispatch/state.json` for your `exp_id`. If `wandb_run_id` is not null, pass `id=wandb_run_id` to resume the existing run. If null (first run), let wandb auto-generate an ID and save it back to `dispatch/state.json` immediately after `wandb.init()` — before any training begins. This ensures interrupted runs resume the same wandb run rather than creating duplicate entries.
+
 ```python
 import os, wandb, torch
 
@@ -255,27 +330,25 @@ run = wandb.init(
     name="<exp_id>",            # matches dispatch/state.json id (e.g. "exp1_cifar10c_main_s0")
     tags=["phase8", "round-N", "<exp_type>"],  # e.g. "main", "ablation", "analysis"
     config={
-        # ALL hyperparams
         "dataset": dataset_name,
         "model": model_name,
         "lr": lr,
         "batch_size": batch_size,
-        # ...
-        # Environment fingerprint ("扣子") — for cross-machine result traceability
+        # REQUIRED: 'main' | 'baseline' | 'ablation' | 'analysis' (all lowercase)
+        "group": "<one of: main | baseline | ablation | analysis>",
+        # Environment fingerprint — for cross-machine result traceability
         "env/conda":        os.environ.get("CONDA_DEFAULT_ENV", "unknown"),
         "env/cuda_version": torch.version.cuda or "cpu",
         "env/torch":        torch.__version__,
         "env/gpu_name":     torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
         "env/hostname":     os.uname().nodename,
     },
-    resume="allow",             # supports re-runs from checkpoint
-    id=wandb_run_id,            # pass from dispatch/state.json if resuming
+    resume="allow",
+    id=wandb_run_id,            # from dispatch/state.json if resuming
 )
 
-# Write wandb_run_id back to dispatch/state.json so supervisor can resume this run
-# Do this IMMEDIATELY after wandb.init() — before any training begins
-# NOTE: copy this function to experiments/utils/dispatch_utils.py ONCE at Phase 8 start,
-# then import it in every script: from experiments.utils.dispatch_utils import _dispatch_update_wandb_id
+# Write wandb_run_id back immediately — before training begins.
+# Copy to experiments/utils/dispatch_utils.py; import in every script.
 def _dispatch_update_wandb_id(exp_id: str, wid: str, state_path: str = "dispatch/state.json"):
     import json, threading
     _lock = getattr(_dispatch_update_wandb_id, "_lock", None) or threading.Lock()
@@ -291,21 +364,43 @@ def _dispatch_update_wandb_id(exp_id: str, wid: str, state_path: str = "dispatch
             with open(state_path, "w") as f:
                 json.dump(state, f, indent=2)
         except Exception:
-            pass  # non-fatal; supervisor will still track via PID
+            pass  # non-fatal
 
 _dispatch_update_wandb_id(exp_id, run.id)
 
 # training loop
 wandb.log({"loss": loss, "ece": ece, "acc": acc, "step": step})
 
-# save final results
-wandb.log({"final/ece": final_ece, "final/acc": final_acc})
+final_metrics = {"ece": final_ece, "acc": final_acc}
+wandb.log({f"final/{k}": v for k, v in final_metrics.items()})
+
+from experiments.utils.checkpoint import upload_best_checkpoint
+artifact_uri = upload_best_checkpoint(
+    run=run,
+    exp_id=exp_id,
+    checkpoint_dir=args.checkpoint_dir,
+    best_metrics=final_metrics,
+)
+# Write artifact URI into sidecar so exec agent can gate checkpoint cleanup on it
+import json as _json
+_sidecar = f"dispatch/{exp_id}.status.json"
+if Path(_sidecar).exists():
+    with open(_sidecar) as _f: _sd = _json.load(_f)
+    _sd["wandb_artifact"] = artifact_uri
+    with open(_sidecar, "w") as _f: _json.dump(_sd, _f, indent=2)
+
 wandb.finish()
 ```
 
 wandb automatically captures: `git.commit`, `host`, `gpu_name`, `gpu_count`, `pip` packages. The `env/*` fields above add the **environment fingerprint** (conda env, CUDA, torch version, GPU model, hostname) so you can verify results came from the same "扣子" across machines. If `env/conda`, `env/cuda_version`, and `env/torch` differ between two runs claiming the same result, investigate before treating them as equivalent.
 
 ### 8.2b: Research Dashboard (tracker.py)
+
+**Hierarchy**: wandb is the PRIMARY logging system (used for analysis in Phase 9 and for generating `all_results.csv` in Phase 8.5 via `export_results.py`). tracker.py is the SECONDARY system for the local Result Shower dashboard and offline cluster sync.
+
+**Offline clusters** (C500, Gadi): tracker.py auto-detects that the dashboard (10.165.232.227) is unreachable and saves results to `pending_sync/`. After the job completes, the exec agent syncs via `tracker_cli.py` from localhost (pull-then-push pattern).
+
+**all_results.csv** is generated in Phase 8.5 by `export_results.py` reading from the wandb API. tracker.py is NOT the source for `all_results.csv` — it feeds the dashboard only.
 
 Every experiment script MUST also push to the local Research Dashboard via `tracker.py`. This feeds the live experiment list and results table visible at `http://10.165.232.227:8080`.
 
@@ -324,6 +419,9 @@ run = tracker.init(
         "method":  method_name,    # required — used for results table columns
         "dataset": dataset_name,   # required — used for results table rows
         "seed":    seed,
+        # REQUIRED: group must be set correctly or all_results.csv analysis will fail.
+        # Use exactly one of: 'main', 'baseline', 'ablation', 'analysis' (all lowercase).
+        "group":   "<one of: main | baseline | ablation | analysis>",
         # any other hyperparams
     },
     log_every=50,                  # push step logs every N steps (default 50)
@@ -339,9 +437,9 @@ run.finish({"final_ece": final_ece, "final_acc": final_acc})
 
 **Offline clusters (C500 platform / Gadi):** Compute nodes have no internet, so tracker auto-detects and saves to `pending_sync/`. The central dashboard (10.165.232.227) is on the lab intranet and NOT reachable from C500/Gadi login nodes — sync must run **from localhost** using a pull-then-push pattern.
 
-> **Cluster skill references**: When running experiments on these clusters, invoke the relevant skill first:
-> - C500 (MetaX): invoke the `use-c500` skill for job submission, env setup, AFS paths
-> - Gadi (NCI): invoke the `use-gadi` skill for debug node setup, PBS queues, scratch paths
+**Cluster configuration** (recorded in `config/config.md` during Phase 0 setup):
+- C500: CCI machine `finn_cci_c500` (testing only), platform submit via `sco acp jobs create`, AFS base `/mnt/afs/lixiaoou/intern/linweitao`, Docker image `metax_pt` (or `maca31_pt` if CUDA errors)
+- Gadi: login `gadi.nci.org.au`, project `li96`, scratch `/scratch/li96/lt2442`, queue `gpuvolta`, modules `cuda/11.7.0 python3/3.10.4`
 
 #### C500 Platform (sco acp jobs)
 
@@ -368,7 +466,7 @@ TMPDIR=/tmp/sync-c500-${PROJECT}
 mkdir -p $TMPDIR
 
 rsync -av finn_cci_c500:${AFS}/${PROJECT}/experiments/results/pending_sync/ $TMPDIR/
-python3 ~/.claude/skills/autoresearch-dashboard/tracker_cli.py sync \
+python3 ~/result_shower/tracker_cli.py sync \
     --host 10.165.232.227 \
     --project $PROJECT \
     --pending-dir $TMPDIR/
@@ -377,69 +475,32 @@ python3 ~/.claude/skills/autoresearch-dashboard/tracker_cli.py sync \
 rm -rf $TMPDIR
 ```
 
-Monitor while running — check job status then sync:
-```bash
-sco acp jobs stream-logs --workspace-name aceworld-base <jobid> -f
-# When done: run the rsync+sync block above, then open dashboard
-```
+Monitor C500 job: `sco acp jobs stream-logs --workspace-name aceworld-base <jobid> -f`
 
 #### Gadi (NCI debug node)
 
-Experiments run on debug nodes (`gadi-gpu-h200-xxxx`) where `/home` has only 10GB — **must** specify `pending_dir` pointing to scratch:
+Experiments run on debug nodes where `/home` has only 10GB — **must** specify `pending_dir` pointing to scratch:
 
 ```python
 SCRATCH = "/scratch/li96/lt2442"
 run = tracker.init(
-    project="<project-name>",
-    name="<exp_id>",
-    host="10.165.232.227",
+    project="<project-name>", name="<exp_id>", host="10.165.232.227",
     config={"method": method, "dataset": dataset, ...},
     pending_dir=f"{SCRATCH}/<project-name>/experiments/results/pending_sync",
 )
 ```
 
-From localhost, pull-push to dashboard:
+From localhost, pull-push to dashboard (same pattern as C500 above — replace `finn_cci_c500:${AFS}` with `gadi:${SCRATCH}`):
 
 ```bash
-PROJECT=<project-name>
-SCRATCH=/scratch/li96/lt2442
-TMPDIR=/tmp/sync-gadi-${PROJECT}
-mkdir -p $TMPDIR
-
-rsync -av gadi:${SCRATCH}/${PROJECT}/experiments/results/pending_sync/ $TMPDIR/
-python3 ~/.claude/skills/autoresearch-dashboard/tracker_cli.py sync \
-    --host 10.165.232.227 \
-    --project $PROJECT \
-    --pending-dir $TMPDIR/
-
-rm -rf $TMPDIR
+rsync -av gadi:/scratch/li96/lt2442/${PROJECT}/experiments/results/pending_sync/ $TMPDIR/
+python3 ~/result_shower/tracker_cli.py sync --host 10.165.232.227 --project $PROJECT --pending-dir $TMPDIR/
 ```
 
-For **live monitoring** while experiment is running (poll every 5 min from localhost):
-```bash
-# Run in a loop — Ctrl+C to stop
-while true; do
-    echo "=== Syncing $(date) ==="
-    PROJECT=<project-name>; TMPDIR=/tmp/sync-loop-${PROJECT}; mkdir -p $TMPDIR
-    rsync -aq gadi:/scratch/li96/lt2442/${PROJECT}/experiments/results/pending_sync/ $TMPDIR/ 2>/dev/null
-    python3 ~/.claude/skills/autoresearch-dashboard/tracker_cli.py sync \
-        --host 10.165.232.227 --project $PROJECT --pending-dir $TMPDIR/ 2>/dev/null
-    rm -rf $TMPDIR
-    sleep 300
-done
-```
-
-#### Viewing cluster experiments in dashboard
-
-After syncing, open the dashboard: `http://10.165.232.227:8080` → select project → click 🔬 Research tab.
-- Synced cluster runs appear in the experiment list with their `host` field showing the cluster node name (e.g. `gadi-gpu-h200-0024`, `sco-worker-xxx`)
-- Status will show `done` if `run.finish()` was called, `running` if synced mid-run
-- Results table and step log history are fully available after sync
-
-**Re-syncing is safe** — the server updates by exp_id (idempotent), so running the rsync+sync block multiple times does not create duplicates.
+**Re-syncing is safe** — the server updates by exp_id (idempotent). Exec agents handle result sync automatically — manual sync only needed for debugging.
 
 **exp_id naming convention** (determines Results Table layout):
-- `exp<N>_<dataset>_main` → method from config['method'], group=Proposed
+- `exp<N>_<dataset>_main` → method from config['method'], group=Proposed (CSV value is `"main"`; displayed as "Proposed" in dashboard)
 - `exp<N>_<dataset>_baseline` → group=Baselines
 - `exp<N>_<dataset>_abl_<variant>` → group=Ablations
 
@@ -453,10 +514,18 @@ Expected values: `main`, `baseline`, `ablation`, `analysis`, `other`. If you see
 
 ### 8.3: Dispatch
 
+**`dispatch/state.json` top-level structure** (initialize before adding any entries — `merge_sidecars()` expects `state["experiments"]`):
+```json
+{
+  "project": "<project-slug>",
+  "experiments": []
+}
+```
+
 For each experiment:
 
 1. Create log at `experiments/logs/<exp_id>.md` **before launching** (leave `wandb_run` blank — fill in after `wandb.init()` returns)
-2. Append to `dispatch/state.json` **before** creating the git tag, so the tag's committed state always includes the dispatch entry:
+2. Append entry to `state["experiments"]` in `dispatch/state.json` **before** creating the git tag, so the tag's committed state always includes the dispatch entry:
    ```bash
    git add dispatch/state.json experiments/logs/<exp_id>.md
    git commit -m "dispatch: add <exp_id>"
@@ -469,100 +538,99 @@ For each experiment:
      "phase": "Phase 8",
      "status": "pending",
      "priority": 1,
-     "group": "main_cifar10c",
+     "group": "main",  // MUST be canonical: "main" / "baseline" / "ablation" / "analysis" — matches all_results.csv group column and early-stop checks
      "early_stop_check_after": 1,
-     "early_stop_threshold_pct": 0.5,
+     "early_stop_threshold_pct": 0.5,   // minimum improvement in PERCENTAGE POINTS over best baseline (e.g. 0.5 = must beat baseline by ≥0.5pp; e.g. 88.0% → 88.5%)
      "early_stop_metric": "acc",
      "host": null,
      "gpu": null,
      "pid": null,
      "wandb_run_id": null,
      "checkpoint_dir": "experiments/checkpoints/exp1_cifar10c_main_s0/",
+     "method": "<METHOD_NAME>",    // e.g., "TTAC", "TTT", "TENT" — must match all_results.csv method column
+     "dataset": "<DATASET_NAME>",  // e.g., "cifar10c", "imagenetc" — must match all_results.csv dataset column
      "command": "uv run python experiments/scripts/run_exp1.py --seed 0 --checkpoint-dir experiments/checkpoints/exp1_cifar10c_main_s0/ --resume",
      "started": null,
      "finished": null,
      "retry_count": 0,
      "max_retries": 3,
      "git_commit": null,
-     "result_file": "experiments/results/exp1_cifar10c_main_s0.csv"
+     "expected_duration_hours": null,
+     "gadi_walltime_hours": null,
+     "duration_basis": null,
+     "pbs_script_path": null,
+     "result_file": "experiments/results/exp1_cifar10c_main_s0.csv",
+     "wandb_artifact": null
    }
    ```
+   `wandb_artifact` is filled by the training script at the end of training (see §8.2 `upload_best_checkpoint()`). Format: `"<entity>/<project>/<exp_id>-best:v0"`. A non-null value means the model weights are permanently stored in wandb — safe to delete the local checkpoint. A null value means the artifact upload failed — do NOT delete local files.
+   ```
+   These fields ensure the dispatch entry is self-documenting. The tracker.py init() call should use these values: `tracker.init(project=..., exp_id=..., config={"method": entry["method"], "dataset": entry["dataset"], "seed": seed, ...})`
+
    Create three entries per experiment (seeds 0, 1, 2), suffixed `_s0`, `_s1`, `_s2`. All seeds in the same experiment share the same `group`. Analysis-only experiments use `_s0` only and may omit `early_stop_*` fields.
 
    **`git_commit` field**: Set to `null` at dispatch time. The supervisor fills it in before launching each run (from `git rev-parse HEAD` on the executing machine). Used by `shared/multi-machine-sync.md` to verify code version matches across machines. Short hash (7 chars) is acceptable.
 
-   **Group naming convention**:
-   - Main experiments: `"main_<dataset>"` (e.g., `"main_cifar10c"`)
-   - Ablations: `"abl_<component>"` (e.g., `"abl_loss_weight"`)
-   - Analysis: `"analysis_<type>"` (e.g., `"analysis_efficiency"`)
+   **Group naming convention** (canonical values only — must match `all_results.csv` group column):
+   - Main experiments: `"main"` — DO NOT use `"main_cifar10c"` or similar compound names
+   - Baselines: `"baseline"`
+   - Ablations: `"ablation"`
+   - Analysis: `"analysis"`
+
+   Using compound group names (e.g. `"main_cifar10c"`) will cause silent data loss in early-stop checks and Phase 9 analysis, which filter on exact canonical values.
 
    **Early-stop semantics for full experiments**: use `early_stop_check_after: 1` for main experiments (one seed reveals if the method is completely broken on this dataset). For ablations testing component importance, use `early_stop_check_after: 2`.
 
-The supervisor owns: host/GPU selection, actual launch, monitoring, retry. Claude only writes `status: "pending"`.
+### 8.4: Execution Sub-agents
 
-Queue all experiments at once — supervisor launches as GPUs become available.
-
-### 8.4: Monitor + Collect Results
-
-**Primary dashboard: Result Shower Research tab** — open with `/autoresearch-dashboard` in Claude Code, or go to `http://10.165.232.227:8080` → select project → click 🔬 Research. Shows:
-- Live experiment list: status badge (running/done/pending), host·GPU, elapsed time
-- Click any row → expand: config kv grid, latest step metrics, log file
-- Results table: method × dataset matrix with ✅/🔄/— cells
-
-**Secondary: WandB project page** — `wandb.ai/<entity>/<project-name>` for detailed loss curves, full log history, and git commit traceability.
-
-On error: read the failed wandb run's logs tab, fix issue, re-queue (new log file + new git tag + new wandb run ID). Escalate to user only if fix requires rethinking the method.
-
-### 8.4b: Autonomous Error Handling
-
-Handle these errors without asking the user. Re-queue with a new `exp_id` (append `_r2`, `_r3`) and new git tag.
-
-| Error | Signal | Autonomous fix |
-|-------|--------|----------------|
-| **CUDA OOM** | `RuntimeError: CUDA out of memory` | Halve `batch_size`; add `--accumulate-grad-batches 2` to compensate; if still OOM, move to smaller pilot on this dataset |
-| **NaN loss** | Loss becomes `nan` after N steps | Add `eps=1e-8` to all divisions/log operations; disable AMP (`--fp16 false`); log gradient norm — if it spikes to >100 before NaN, add `clip_grad_norm_(params, 1.0)` |
-| **NaN metric (not loss)** | Final **primary metric** is `nan` but loss is finite | Check for division by zero in the primary metric calculation (e.g., empty class in ECE bins, zero-support F1); add guard: `if denominator == 0: continue`. NaN in auxiliary metrics while primary is clean is non-blocking — log it but do not halt. |
-| **wandb unreachable** | `ConnectionError` or `wandb: Network error` | `wandb.init(..., mode="offline")`; results still saved to `wandb/` dir locally; sync after: `wandb sync wandb/run-*/` |
-| **SSH connection drops mid-run** | Supervisor marks run as dead | Supervisor auto-retries up to `max_retries`; script resumes from last checkpoint via `--resume` flag — no action needed unless all retries exhausted |
-| **Script crashes immediately** (exit code ≠ 0, 0 steps logged) | Import error, missing file, misconfigured path | SSH to the machine, run script interactively with `uv run python script.py --dry-run` (or just 1 step) to reproduce the error; fix and re-queue |
-| **Results are all identical across seeds** | Seeds not being passed correctly to all RNG sources | Add `torch.manual_seed(seed); np.random.seed(seed); random.seed(seed)` at top of script; verify `config['seed']` is varying in wandb |
-| **Experiment takes 10× longer than estimated** | Data loading bottleneck or inefficient augmentation | Add `num_workers=4, pin_memory=True` to DataLoader; profile with `torch.profiler` for one batch |
-
-**Escalate to user only if:**
-- Fix requires changing the method (loss function, architecture, core algorithm)
-- All 3 retries exhausted with different fixes attempted
-- Results are suspiciously good (e.g., 99% accuracy on a hard benchmark) — verify before treating as real
-
-Save results as CSV: `experiments/results/<exp_id>.csv` (columns: method, dataset, metric, seed, value).
-
-Update `progress/progress.md` and commit after each experiment completes.
-
-### 8.4c: Early-Stop Check (after each experiment completes)
-
-**Run this after every experiment completes** — script was written to `experiments/scripts/early_stop_check.py` in Phase 8.1:
-
+**Before spawning exec sub-agents — supervisor conflict check:**
+Check if experiment-supervisor service is running:
 ```bash
-uv run python experiments/scripts/early_stop_check.py
+systemctl is-active experiment-supervisor 2>/dev/null
 ```
+- If `active`: supervisor is managing experiments. Do NOT spawn exec sub-agents manually — supervisor will pick up the dispatched entries automatically. Proceed to polling (Step 8.5).
+- If `inactive` or `not-found`: spawn exec sub-agents manually as described below.
 
-If any group is cancelled:
-- Notify-telegram: "⏹ Early stop: group `[group_id]`, avg improvement `[X]`% < threshold `[Y]`%. Cancelled `[N]` pending experiments."
-- Append to `experiments/logs/early_stop.md`: date, group, improvement value, cancelled experiment IDs
-- **If the cancelled group is a main experiment group** (not ablation): this is a serious signal. Do the following immediately:
-  1. Set ALL other pending experiment entries in `dispatch/state.json` to `status: "on_hold"` (the supervisor will not launch `on_hold` entries — they are treated like `cancelled` for scheduling purposes but can be reactivated)
-  2. Send telegram notification with the early-stop details and ask: "Main experiment group `[group_id]` shows no improvement. Options: A) Continue remaining experiments anyway (reply 'continue'), B) Return to Phase 5 method iteration (reply 'rollback')"
-  3. Wait for user response before resuming. Do NOT auto-proceed.
-  4. On "continue": change all `on_hold` entries back to `pending`; continue Phase 8
-  5. On "rollback": leave `on_hold` entries as-is; proceed to Phase 5 rollback
+**One Execution Sub-agent per experiment entry (per seed).** Spawn all in parallel immediately after the dispatch table is committed.
 
-Running experiments are **never killed** — let them finish and record the results for diagnosis.
+Each sub-agent is responsible end-to-end for one experiment: code sync → environment check → launch → monitor (every 5 min) → error recovery → result collection → checkpoint cleanup → report back.
+
+**Full sub-agent prompt template and responsibilities: use the platform-specific template from `skills/lab/agents/` based on the dispatch entry's `host` field (see `skills/lab/SKILL.md` "Execution Sub-agent Templates" for selection logic).**
+
+Sub-agents use **model: haiku** (lightweight — all execution, no research decisions).
+
+Lab Agent responsibilities while sub-agents run:
+- Sub-agents write to `dispatch/<EXP_ID>.status.json` (sidecar per experiment) — not via SendMessage. Lab Agent polls and merges sidecars into `dispatch/state.json` every 2 minutes via `merge_sidecars()`. Escalations appear as `progress/escalate_<EXP_ID>.md` files — check for these on each poll.
+- On each detected completion: log to `progress/lab.log`; run `early_stop_check.py`
+  - If a **main** group is early-stopped: set all other pending entries to `status: "on_hold"`, notify Pipeline Lead, wait for direction
+- On escalation file detected: relay to Pipeline Lead immediately
+- Commit after each group completes: `git commit -m "results: <group_id> complete"`
+- When ALL sub-agents are done (all entries `status: "done"` or `"cancelled"`) → proceed to §8.5
 
 ### 8.5: Export Results to CSV
+
+**Pre-export guard — verify ALL experiments are complete:**
+```python
+import json, sys
+with open("dispatch/state.json") as f:
+    state = json.load(f)
+pending = [e for e in state["experiments"] if str(e.get("phase")) in ("8", "Phase 8")
+           and e["status"] not in ("done", "failed", "cancelled")]
+if pending:
+    print(f"ERROR: {len(pending)} experiments still running or pending:")
+    for e in pending: print(f"  {e['id']} status={e['status']}")
+    print("Wait for all experiments to complete before exporting.")
+    sys.exit(1)
+phase8 = [e for e in state["experiments"] if str(e.get("phase")) in ("8", "Phase 8")]
+print(f"OK: all Phase 8 experiments complete ({len(phase8)} entries).")
+```
+Do NOT proceed past this check if any experiments are still running.
 
 When ALL experiments complete, export final metrics from wandb to CSV so `paper_integrity.py` can trace numbers back to sources.
 
 ```python
 import wandb, pandas as pd, os, sys
+from pathlib import Path
 
 # Validate wandb credentials before making API calls
 api = wandb.Api()
@@ -579,29 +647,70 @@ rows = []
 for run in runs:
     if run.state != "finished":
         continue
+
+    # Get artifact URI for this run (type="model" artifact = best checkpoint)
+    artifact_uri = ""
+    try:
+        arts = run.logged_artifacts()
+        model_art = next((a for a in arts if a.type == "model"), None)
+        if model_art:
+            artifact_uri = model_art.qualified_name   # e.g. "entity/project/exp1_s0-best:v0"
+    except Exception:
+        pass  # non-fatal; artifact_uri stays ""
+
+    if not artifact_uri:
+        print(f"WARNING: run {run.name} has no model artifact — checkpoint may be lost. "
+              f"Check if upload_best_checkpoint() was called in the training script.")
+
     for key, val in run.summary.items():
         if key.startswith("final/"):
             metric = key.replace("final/", "")
             rows.append({
-                "exp_id":  run.name,
-                "method":  run.config.get("method", run.name),
-                "dataset": run.config.get("dataset", "unknown"),
-                "group":   run.config.get("group", "other"),  # must be "main"/"baseline"/"ablation"/"analysis"
-                "metric":  metric,
-                "seed":    run.config.get("seed", 0),
-                "value":   val,
-                "wandb_run": run.url,
+                "exp_id":          run.name,
+                "method":          run.config.get("method", run.name),
+                "dataset":         run.config.get("dataset", "unknown"),
+                "group":           run.config.get("group", "other"),
+                "metric":          metric,
+                "seed":            run.config.get("seed", 0),
+                "value":           val,
+                "wandb_run":       run.url,
+                "wandb_artifact":  artifact_uri,  # permanent link to model weights
             })
 
 df = pd.DataFrame(rows)
-df.to_csv("experiments/results/all_results.csv", index=False)
+# Defensive: create output directory if missing
+out_path = Path("experiments/results/all_results.csv")
+out_path.parent.mkdir(parents=True, exist_ok=True)
+df.to_csv(out_path, index=False)
+# Warn on incomplete metrics (NaN rows)
+if df.isna().any().any():
+    print(f"WARNING: {df.isna().sum().sum()} NaN values in exported results.")
+    print(df[df.isna().any(axis=1)][["exp_id", "method", "dataset"]].to_string())
+    print("These experiments may have crashed or not logged final/* metrics.")
 ```
 
-**Required CSV format** (columns: exp_id, method, dataset, group, metric, seed, value, wandb_run):
+**Required CSV format** (columns: exp_id, method, dataset, group, metric, seed, value, wandb_run, wandb_artifact):
 - `exp_id`: the dispatch/state.json id (e.g., `exp1_cifar10c_main_s0`) — for traceability
 - `method`: algorithm name (must match how it appears in the paper's tables)
-- `group`: canonical group value — must be one of `"main"`, `"baseline"`, `"ablation"`, `"analysis"`. Set this in your experiment script config: `config={"group": "main", ...}`. Do NOT use the dispatch group ID (e.g. `"main_cifar10c"`) here.
-- `wandb_run`: wandb URL — used by `paper_integrity.py` to verify numbers
+- `group`: canonical group value — must be one of `"main"`, `"baseline"`, `"ablation"`, `"analysis"`.
+- `wandb_run`: wandb URL — links number → training run (metrics, config, logs)
+- `wandb_artifact`: wandb artifact qualified name — links number → model weights (permanent, reproducible)
+
+**Traceability chain**: paper number → `all_results.csv` row → `wandb_run` (metrics + logs) + `wandb_artifact` (model weights). Every number in the paper must have a non-empty `wandb_artifact`. If any row has an empty `wandb_artifact`, the artifact upload failed and the weights may be lost — investigate before proceeding to writing.
+
+**Post-export artifact check** (run after `export_results.py`):
+```python
+import pandas as pd
+df = pd.read_csv("experiments/results/all_results.csv")
+missing_artifact = df[df["wandb_artifact"].isna() | (df["wandb_artifact"] == "")]
+if not missing_artifact.empty:
+    print(f"WARNING: {len(missing_artifact)} rows missing wandb_artifact:")
+    print(missing_artifact[["exp_id", "method", "dataset", "metric"]].to_string())
+    print("These experiments either did not call upload_best_checkpoint() or the upload failed.")
+    print("Options: (A) re-run upload manually via wandb SDK, (B) re-run the experiment with the fixed script.")
+else:
+    print(f"✅ All {len(df)} rows have wandb_artifact links. Full checkpoint traceability confirmed.")
+```
 
 **Action**: Write the code above to `experiments/scripts/export_results.py` now (at Phase 8.5 start, before running it). Then:
 
@@ -629,3 +738,15 @@ Expected: no NaN values; `exp_id`, `method`, `dataset`, `group`, `metric`, `seed
 - Review `experiments/results/all_results.csv` — check for missing entries, NaN values, mismatched seeds
 - Update `progress/progress.md` with best result per dataset
 - Commit all results + notify-telegram with wandb project URL and path to CSV
+
+After verifying `all_results.csv` completeness:
+
+**SendMessage to Pipeline Lead** (mandatory — triggers Phase 9):
+```
+Phase 8 complete. all_results.csv ready.
+Experiments: <N_total> total, <N_done> done, <N_failed> failed, <N_cancelled> cancelled
+Coverage: <summary of methods × datasets matrix>
+Early stop triggered: <yes/no — which groups>
+Key result: <best metric vs. strongest baseline>
+Ready for Phase 9 analysis.
+```

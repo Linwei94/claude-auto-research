@@ -677,13 +677,120 @@
 
     hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
 
-    /* Paper view (keep existing PDF embed) */
+    /* Paper view */
     #pdf-frame {
       width: 100%;
       height: calc(100vh - 90px);
       border: none;
     }
     .pdf-select { margin-bottom: 10px; display: flex; gap: 8px; align-items: center; }
+
+    /* Paper list panel */
+    #paper-layout { height: calc(100vh - 44px); }
+    .paper-list-item { border-bottom: 1px solid var(--border); }
+    .paper-list-item:last-child { border-bottom: none; }
+
+    @media (max-width: 768px) {
+      #paper-layout { flex-direction: column !important; height: auto; }
+      #paper-list-panel { width: 100% !important; max-width: 100% !important; border-right: none !important; border-bottom: 1px solid var(--border); max-height: 200px; }
+      #paper-resize { display: none; }
+      #paper-viewer iframe { min-height: 60vh; }
+    }
+
+    /* ── Mobile hamburger button ─────────────────────── */
+    #menu-toggle {
+      display: none;
+      font-size: 18px;
+      padding: 4px 8px;
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-dim);
+      cursor: pointer;
+    }
+
+    /* ── Mobile responsive ───────────────────────────── */
+    @media (max-width: 768px) {
+      body {
+        flex-direction: column;
+        overflow: auto;
+        height: auto;
+      }
+
+      #sidebar {
+        width: 100%;
+        min-width: unset;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        /* Collapsed by default on mobile */
+        display: none;
+        max-height: 60vh;
+        overflow-y: auto;
+      }
+      #sidebar.mobile-open { display: flex; }
+
+      #main {
+        overflow: auto;
+        height: auto;
+        min-height: 100vh;
+      }
+
+      #topbar {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+      }
+
+      #menu-toggle { display: block; }
+
+      #view-container {
+        overflow-y: visible;
+        padding: 12px;
+      }
+
+      /* Run card: single column detail grid on mobile */
+      .run-detail-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      /* Overview: single column on mobile */
+      .overview-grid {
+        grid-template-columns: 1fr;
+      }
+
+      /* Summary: 2 columns on mobile (down from 4) */
+      .summary-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      /* GPU row: wrap on mobile */
+      .gpu-row { flex-wrap: wrap; }
+      .gpu-name { width: auto; flex: 1; }
+
+      /* Results table: scroll horizontally */
+      .results-table-wrap { overflow-x: auto; }
+
+      /* Modal: full width on mobile */
+      #modal {
+        width: calc(100vw - 32px);
+        max-height: 80vh;
+      }
+
+      /* Sidebar project list: fixed height on mobile */
+      #project-list { height: auto; max-height: 120px; }
+      #phase-group-list { height: auto; max-height: 120px; }
+
+      /* Run desc: allow wrapping on mobile */
+      .run-desc { white-space: normal; max-width: 100%; }
+    }
+
+    @media (max-width: 480px) {
+      .summary-grid { grid-template-columns: 1fr 1fr; }
+      #topbar { padding: 0 12px; }
+      .topbar-actions { gap: 6px; }
+      .text-muted { display: none; }
+    }
   </style>
 </head>
 <body>
@@ -725,7 +832,10 @@
 
   <main id="main">
     <header id="topbar">
-      <div id="breadcrumb">Research Dashboard</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <button id="menu-toggle" title="Toggle sidebar">☰</button>
+        <div id="breadcrumb">Research Dashboard</div>
+      </div>
       <div class="topbar-actions">
         <span class="text-muted" id="last-updated"></span>
         <button id="theme-toggle" title="切换主题">🌙</button>

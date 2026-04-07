@@ -1,5 +1,9 @@
 # Experiment Design Debate — 4-Agent Plan Review
 
+**Model**: All agents use `model: sonnet` (claude-sonnet-4-6) when spawned via Agent tool.
+
+**Agent type**: These are Agent-tool sub-agents. They must NOT use SendMessage. Results are written to files only.
+
 ## Overview
 
 Four specialized agents review `plan/experiment_plan.md` **before any GPU is spent**. Each attacks the plan from a different angle. The goal: catch gaps, biases, and missing pieces now — not after 200 GPU-hours are sunk.
@@ -229,7 +233,9 @@ Output format:
 
 ### Round 1: Parallel Review
 
-Spawn all 4 agents simultaneously. Each independently reviews the experiment plan and produces a report with verdict (PASS / REVISE / REJECT).
+Spawn all 4 agents simultaneously. Each independently reviews the experiment plan and **returns their report inline** (as the agent's response text — do NOT write to files). Lab Agent collects all 4 inline responses and writes the consolidated debate record to `plan/experiment_design_debate.md`.
+
+**Timeout handling**: If any agent does not return within 10 minutes, treat it as REVISE with a single finding: "[agent name] timed out — manual review of this dimension required." Proceed with the verdicts from the remaining 3 agents.
 
 ### Round 2: Synthesis and Auto-Revision
 
@@ -241,9 +247,14 @@ After collecting all 4 reports:
 4. **Re-run flagging agents** (max 2 revision cycles): Re-run only the agents that gave REVISE/REJECT on the updated plan. Each re-run is a **full review of the entire updated plan** — not just the changed sections. If agent A raised 5 issues and 3 were fixed, agent A reviews the whole plan again and may raise new issues triggered by the fixes. This is expected; new issues from revision cycles are treated identically to original issues.
 
 **Passing threshold** (after auto-revision):
-- NeurIPS / ICML: avg overall ≥ 5/9 across venue dimensions
-- ICLR: avg overall ≥ 5/10
-- CVPR / ECCV: no agent gives Reject; ≤1 gives Weak Reject
+
+All venues use the same verdict-based threshold: **Pass if no agent gives REJECT, and ≤1 agent gives REVISE.**
+
+- 0 REJECT + 0–1 REVISE → **PASS** (proceed to Phase 8)
+- 0 REJECT + 2–4 REVISE → **revise and re-run** flagging agents (up to 2 cycles)
+- Any REJECT → **revise and re-run** flagging agents (up to 2 cycles); if REJECT persists after 2 cycles → rollback
+
+Note: Agents output PASS/REVISE/REJECT verdicts (not numeric scores). Do not mix numeric score thresholds with verdict-based thresholds.
 
 **Auto-decision**:
 - All agents PASS (or only nice-to-haves remain) → **proceed to Phase 8**
@@ -306,4 +317,11 @@ Remaining nice-to-haves (tracked, not blocking):
 ### If ROLLBACK:
 Blocking issue: [which agent, what gap]
 Action: Redesign experiment plan from scratch.
+
+---
+
+> **Note for Lab Agent**:
+> After the debate concludes, Lab Agent must report the outcome to Pipeline Lead via SendMessage using the following mapping:
+> - If Final Decision = "PROCEED TO PHASE 8" → send to Pipeline Lead: "Phase 7 complete. Experiment design: PASS. Proceeding to Phase 8."
+> - If Final Decision = "ROLLBACK TO PHASE 6" → send to Pipeline Lead: "Phase 7 REJECT. [State the primary blocking issue]. Rolling back to Phase 6."
 ```

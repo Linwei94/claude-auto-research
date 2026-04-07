@@ -1,40 +1,46 @@
 # Multi-Machine Sync Protocol
 
-Covers: code sync across machines, resume from interrupted experiments, and verifying result consistency.
+Covers: code sync across platforms, result sync from clusters, concurrent state.json access, and resume from interrupted experiments.
 
 ---
 
-## The Core Rule
+## 1. Overview
 
-**Never run an experiment without verifying the code is the right version.**
+Three execution platforms, two sync models:
 
-Two operations cause most issues:
-- Running on machine B after editing on machine A without pushing/pulling
-- Resuming a broken experiment after the code has been updated
+| Platform | Machines | Launch method | Result sync |
+|---|---|---|---|
+| Local | xuchang-lab0/1/2/3 | SSH + nohup | Direct file access, no sync needed |
+| C500 MetaX cluster | Platform nodes | `sco acp jobs create` | rsync cluster→localhost after job finishes |
+| Gadi NCI cluster | Gadi nodes | PBS `qsub` | rsync cluster→localhost after job finishes |
+
+**Sync direction is always cluster → localhost (pull).** Never push results from localhost to a cluster.
+
+For local machines, the Lab Agent SSHes directly and reads result files in place — no pending_sync step.
 
 ---
 
-## Pre-Run Checklist (run EVERY time, on EVERY machine)
+## 2. Local Machine Sync
 
-Before queuing or launching any experiment script, run:
+**The Core Rule:** Never run an experiment without verifying the code is the right version.
+
+### Pre-Run Checklist (every machine, every time)
 
 ```bash
 # On the machine that WILL RUN the experiment:
 bash experiments/utils/pre-run-check.sh
 ```
 
-This script (see below) checks:
+This script checks:
 1. `git status` is clean (no uncommitted changes)
-2. Local is up to date with `origin/main` (no un-pulled commits)
+2. Local is up to date with `origin/main`
 3. Prints current commit hash — copy this into dispatch/state.json
 
-If the check fails: **stop. Do not run. Fix the issue first.**
+If the check fails: **stop. Fix the issue first.**
 
----
+### pre-run-check.sh
 
-## pre-run-check.sh
-
-Save at `experiments/utils/pre-run-check.sh` in every project:
+Save at `experiments/utils/pre-run-check.sh`:
 
 ```bash
 #!/bin/bash
@@ -46,115 +52,183 @@ echo "Branch:   $(git branch --show-current)"
 echo "Commit:   $(git rev-parse HEAD)"
 echo ""
 
-# 1. Check for uncommitted changes
 if ! git diff --quiet || ! git diff --cached --quiet; then
-    echo "❌ Uncommitted changes detected. Commit or stash before running."
+    echo "FAIL: Uncommitted changes detected."
     git status --short
     exit 1
 fi
 
-# 2. Check for untracked experiment scripts (block — untracked code = unreproducible results)
 UNTRACKED=$(git ls-files --others --exclude-standard experiments/scripts/ 2>/dev/null)
 if [ -n "$UNTRACKED" ]; then
-    echo "❌ Untracked files in experiments/scripts/ — commit them before running:"
+    echo "FAIL: Untracked files in experiments/scripts/:"
     echo "$UNTRACKED"
-    echo "    Run: git add experiments/scripts/<file> && git commit"
     exit 1
 fi
 
-# 3. Check if up to date with remote
-git fetch origin --quiet 2>/dev/null || echo "⚠️ Could not reach remote (offline?)"
+git fetch origin --quiet 2>/dev/null || echo "WARN: Could not reach remote (offline?)"
 LOCAL=$(git rev-parse HEAD)
 REMOTE=$(git rev-parse origin/$(git branch --show-current) 2>/dev/null || echo "unknown")
 
 if [ "$LOCAL" != "$REMOTE" ] && [ "$REMOTE" != "unknown" ]; then
     BEHIND=$(git rev-list HEAD..origin/$(git branch --show-current) --count 2>/dev/null || echo "?")
-    AHEAD=$(git rev-list origin/$(git branch --show-current)..HEAD --count 2>/dev/null || echo "?")
-    echo "⚠️ Out of sync with remote:"
-    echo "   Local is $AHEAD commits ahead, $BEHIND commits behind"
     if [ "$BEHIND" -gt 0 ] 2>/dev/null; then
-        echo "❌ Unpulled commits exist. Run: git pull"
+        echo "FAIL: Unpulled commits exist. Run: git pull"
         exit 1
     fi
 fi
 
-echo "✅ Code sync OK"
-echo "   Commit: $(git rev-parse HEAD)"
-echo ""
+echo "OK: Code sync check passed"
+echo "Commit: $(git rev-parse HEAD)"
+```
 
-# 4. Validate dispatch commands reference existing scripts
-if [ -f dispatch/state.json ]; then
-    python3 - <<'PYEOF'
+---
+
+## 3. C500 Cluster Sync
+
+Results are written by the exec agent to AFS:
+```
+/mnt/afs/lixiaoou/intern/linweitao/<PROJECT>/experiments/results/pending_sync/
+```
+
+### Workflow
+
+1. Exec agent submits job via `sco acp jobs create` and records the job ID in state.json.
+2. Poll job status until it shows `FINISHED`:
+   ```bash
+   sco acp jobs list | grep <job_id>
+   ```
+3. **Only after FINISHED**, run rsync pull to localhost:
+   ```bash
+   rsync -av --partial --timeout=60 \
+     finn_cci_c500:${AFS}/${PROJECT}/experiments/results/pending_sync/ \
+     $TMPDIR/
+   ```
+4. Sync results with tracker:
+   ```bash
+   python3 ~/result_shower/tracker_cli.py sync \
+       --host 10.165.232.227 \
+       --project $PROJECT \
+       --pending-dir $TMPDIR/
+   ```
+5. Update dispatch/state.json: set `status: "done"`, set `result_file`.
+6. Clean up temp directory:
+   ```bash
+   # Clean up temp directory
+   rm -rf $TMPDIR
+   ```
+
+Mid-run syncs are safe — the server merges incrementally by `exp_id`. Sync as often as needed. Call `run.finish()` at experiment end to transition status from `running` to `done`.
+
+---
+
+## 4. Gadi Cluster Sync
+
+Results are written by the exec agent to scratch:
+```
+/scratch/li96/lt2442/<PROJECT>/experiments/results/pending_sync/
+```
+
+### Workflow
+
+1. Exec agent submits job via `qsub` and records the PBS job ID in state.json.
+2. Poll job status until state is `C` (completed) or `E` (exiting):
+   ```bash
+   qstat <job_id>
+   ```
+3. **Only after C/E**, rsync pull to localhost (run from a machine with Gadi SSH access):
+   ```bash
+   rsync -avz --progress \
+     gadi:/scratch/li96/lt2442/<PROJECT>/experiments/results/pending_sync/ \
+     <localhost_project_path>/experiments/results/
+   ```
+4. Sync results with tracker:
+   ```bash
+   python3 ~/result_shower/tracker_cli.py sync \
+       --host 10.165.232.227 \
+       --project $PROJECT \
+       --pending-dir $TMPDIR/
+   ```
+5. Update dispatch/state.json: set `status: "done"`, set `result_file`.
+6. Clean up temp directory:
+   ```bash
+   # Clean up temp directory
+   rm -rf $TMPDIR
+   ```
+
+Mid-run syncs are safe — the server merges incrementally by `exp_id`. Sync as often as needed. Call `run.finish()` at experiment end to transition status from `running` to `done`.
+
+---
+
+## 5. dispatch/state.json Concurrent Access
+
+**Race condition:** Lab Agent polls state.json every 2 minutes. A supervisor daemon may also update it. Multiple exec sub-agents can write their own `exp_id` entries simultaneously.
+
+### Rules
+
+- Each exp_id is a separate top-level entry — writers that only touch their own entry are naturally isolated.
+- **Never do a blind write** (read stale copy → modify → write). Always read the current file immediately before writing.
+
+### Safe update patterns
+
+**WARNING**: `threading.Lock()` only protects same-process threads. For cross-process safety (multiple exec sub-agent processes running concurrently), use the `flock` approach below instead. The Python lock alone is insufficient for multi-agent dispatch.
+
+**Python (exec agent):**
+```python
+import json, os, tempfile, threading
+
+_state_lock = threading.Lock()
+
+def update_exp_status(state_path, exp_id, updates):
+    with _state_lock:
+        with open(state_path) as f:
+            state = json.load(f)
+        entry = next((e for e in state["experiments"] if e["id"] == exp_id), None)
+        if entry:
+            entry.update(updates)
+        else:
+            print(f"WARNING: experiment {exp_id} not found in dispatch/state.json")
+        # Atomic write: write to temp then rename (POSIX atomic)
+        tmp = state_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp, state_path)   # atomic on POSIX
+```
+
+**Shell script:**
+```bash
+# Use flock to serialize concurrent writers
+(
+  flock -x 200
+  # read-modify-write here
+  python3 -c "
 import json, sys
-from pathlib import Path
-state = json.load(open("dispatch/state.json"))
-for exp in state.get("experiments", []):
-    if exp.get("status") != "pending":
-        continue
-    cmd = exp.get("command", "")
-    # Find last argument that looks like a python script
-    parts = cmd.split()
-    scripts = [p for p in parts if p.endswith(".py")]
-    for s in scripts:
-        if not Path(s).exists():
-            print(f"❌ Script not found: {s} (referenced by exp_id={exp['id']})")
-            sys.exit(1)
-print("✅ All dispatch scripts exist")
-PYEOF
-fi
-
-echo "Copy this commit hash into dispatch/state.json > git_commit field."
+state = json.load(open('dispatch/state.json'))
+state['experiments'] = [dict(e, status='$NEW_STATUS') if e['id'] == '$EXP_ID' else e for e in state['experiments']]
+json.dump(state, open('dispatch/state.json','w'), indent=2)
+"
+) 200>dispatch/state.json.lock
 ```
 
 ---
 
-## Updated dispatch/state.json Entry
+## 6. Resume Procedure
 
-Add `git_commit` to every entry:
-
-```json
-{
-  "id": "exp1_cifar10c_main",
-  "phase": "Phase 8",
-  "status": "pending",
-  "git_commit": "a3f7c2d",        ← commit hash from pre-run-check.sh
-  "host": "xuchang-lab1",
-  "gpu": 0,
-  "pid": null,
-  "wandb_run_id": null,
-  "checkpoint_dir": "experiments/checkpoints/exp1_cifar10c_main/",
-  "command": "uv run python experiments/scripts/run_exp1.py --checkpoint-dir experiments/checkpoints/exp1_cifar10c_main/ --resume",
-  "started": null,
-  "finished": null,
-  "retry_count": 0,
-  "max_retries": 3,
-  "result_file": "experiments/results/exp1_cifar10c_main.csv",
-  "priority": 1
-}
-```
-
----
-
-## Resume Procedure
-
-When an experiment has `status: "failed"` or `status: "interrupted"`:
+When an experiment has `status: "failed"` or `status: "on_hold"`:
 
 ### Step 1: Check code version
 
 ```bash
-# On the machine that will resume:
 EXPECTED=$(jq -r '.experiments[] | select(.id=="<exp_id>") | .git_commit' dispatch/state.json)
 CURRENT=$(git rev-parse HEAD)
-
 echo "Expected: $EXPECTED"
 echo "Current:  $CURRENT"
 ```
 
 | Situation | Action |
-|-----------|--------|
+|---|---|
 | Hashes match | Safe to resume — run with `--resume` flag |
 | Hashes differ, only non-experiment files changed | Review diff, likely safe |
-| Hashes differ, `experiments/scripts/` changed | **Stop** — see below |
+| Hashes differ, `experiments/scripts/` changed | **Stop — see Step 2** |
 
 ### Step 2: If scripts changed since the experiment started
 
@@ -162,118 +236,21 @@ echo "Current:  $CURRENT"
 git diff <expected_commit> HEAD -- experiments/scripts/<script>.py
 ```
 
-**Decide:**
-- Changes are bug fixes to unrelated bugs → probably safe, but create a new exp_id
-- Changes affect the experiment logic → **do NOT resume**. Start a new run:
-  - New exp_id (e.g., `exp1_cifar10c_main_v2`)
-  - New git tag
-  - New wandb run (do NOT set `id=` — get a fresh run)
-  - Old checkpoints are NOT used — start from scratch
+- Changes are bug fixes unrelated to the experiment → probably safe, but create a new exp_id.
+- Changes affect experiment logic → **do NOT resume**. Start a new run with a new exp_id, new git tag, new wandb run, and delete old checkpoints.
 
 ### Step 3: Resume cleanly
 
 ```bash
-# Confirm pre-run check passes first
-bash experiments/utils/pre-run-check.sh
+bash experiments/utils/pre-run-check.sh   # must pass
 
-# Resume with existing checkpoint
 uv run python experiments/scripts/run_exp1.py \
-    --checkpoint-dir experiments/checkpoints/exp1_cifar10c_main/ \
+    --checkpoint-dir experiments/checkpoints/<exp_id>/ \
     --resume
 ```
 
-wandb will continue logging to the same run (because `resume="allow"` and `id=wandb_run_id`).
+wandb continues logging to the same run (uses `resume="allow"` and `id=wandb_run_id`).
 
 Update dispatch: set `status: "running"`, update `git_commit` to current hash, increment `retry_count`.
 
----
-
-## Dashboard: Using wandb Effectively
-
-wandb is the primary experiment dashboard. No extra tools needed.
-
-### Setup: one project per research project
-
-All experiments (pilots + full + ablations) go to the SAME wandb project. Name = git repo name.
-
-### Key views to configure
-
-**1. Status overview (Runs table)**
-
-Columns to show:
-- `Name` (exp_id)
-- `State` (running / finished / crashed / failed)
-- `env/hostname` — which machine it ran on
-- `env/conda`, `env/cuda_version`, `env/torch` — environment fingerprint
-- Your primary metric (e.g., ECE, accuracy)
-- `tags` (phase, round)
-- `git.commit` — wandb auto-captures this
-
-Filter `State = crashed OR failed` → your resume queue.
-
-**2. Group by tag for phase summary**
-
-In the table, group by `tags` → see all Phase 4 pilots together, Phase 8 mains together.
-
-**3. Comparing across machines**
-
-Filter by `env/hostname` → compare the same experiment run on two machines. If results differ by >1%, check `env/cuda_version` and `env/torch` first.
-
-**4. Quick resume check**
-
-Click a crashed run → Overview tab → `git.commit` field. This is the wandb-recorded commit. Compare with your dispatch entry's `git_commit`. They should match.
-
----
-
-## Common Problems and Fixes
-
-### "Ran experiment with wrong code"
-
-Symptoms: wandb shows `git.commit` ≠ what you expected.
-
-Fix:
-1. In wandb: tag the run as `stale-code`, mark notes with the correct commit
-2. In dispatch: update `git_commit`, set `status: "invalidated"`
-3. Create new entry with correct code, new exp_id, new git tag
-
-### "Checkpoint exists but experiment looks wrong"
-
-The checkpoint was saved with old logic. Don't trust it.
-
-```bash
-rm -rf experiments/checkpoints/<exp_id>/
-```
-
-Start fresh with a new exp_id.
-
-### "Two machines have different results for same experiment"
-
-1. Compare `env/conda`, `env/cuda_version`, `env/torch` between the two wandb runs
-2. Compare `git.commit` — if different, that's the cause
-3. If environment and code are identical, it's a seed/hardware issue → report mean ± std across both runs
-
-### "Forgot to pull, ran experiment with stale code"
-
-1. Check `git log --oneline <stale_commit>..<current_HEAD> -- experiments/scripts/` — what changed?
-2. If the script itself didn't change: results are still valid, just update the git_commit in dispatch
-3. If the script changed: invalidate the run, re-run
-
----
-
-## Workflow Summary (one-page reference)
-
-```
-Before ANY experiment:
-  1. git commit -a && git push         (on your edit machine)
-  2. ssh <target-machine>
-  3. cd <project-dir> && git pull
-  4. bash experiments/utils/pre-run-check.sh   ← MUST PASS
-  5. Copy commit hash → dispatch/state.json > git_commit
-  6. git tag && queue to dispatch
-
-When experiment breaks:
-  1. Check dispatch: status = failed/interrupted?
-  2. git diff <dispatch.git_commit> HEAD -- experiments/scripts/<script>.py
-  3. If no changes: resume with --resume (same exp_id, same wandb id)
-  4. If scripts changed: new exp_id, new git tag, new wandb run, delete old checkpoint
-```
+For **C500/Gadi resumes**: re-submit the job with the same checkpoint dir path on the cluster filesystem. Verify the checkpoint was not lost (some scratch filesystems purge files after N days).

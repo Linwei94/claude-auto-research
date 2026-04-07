@@ -3,14 +3,25 @@
  * Links GPUs to running experiments by matching host + gpu fields.
  */
 
+let _gpuRefreshInterval = null;
+
+function stopGPURefresh() {
+  if (_gpuRefreshInterval !== null) {
+    clearInterval(_gpuRefreshInterval);
+    _gpuRefreshInterval = null;
+  }
+}
+
 export async function renderGPUs(container, state) {
   container.innerHTML = '<div class="loading">Querying GPU hosts…</div>';
 
   let gpus;
   try {
-    gpus = await fetch('/api/gpus').then(r => r.json());
-  } catch (_) {
-    container.innerHTML = `<div class="error-box">Failed to reach /api/gpus — is gnvitop installed?</div>`;
+    const res = await fetch('/api/gpus');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    gpus = await res.json();
+  } catch (e) {
+    container.innerHTML = `<div class="error-box">Failed to reach /api/gpus — is gnvitop installed? (${escHtml(e.message)})</div>`;
     return;
   }
 
@@ -51,7 +62,7 @@ export async function renderGPUs(container, state) {
 
   let html = `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-      <div style="font-size:12px;color:var(--text-dim)">${gpus.length} host${gpus.length !== 1 ? 's' : ''} · cache 30s</div>
+      <div style="font-size:12px;color:var(--text-dim)">${gpus.length} host${gpus.length !== 1 ? 's' : ''} · cache 30s · auto-refresh 15s</div>
       <button onclick="window.__rdb.navigate('gpus')" class="btn-sm">↻ Refresh</button>
     </div>`;
 
@@ -108,6 +119,19 @@ export async function renderGPUs(container, state) {
   });
 
   container.innerHTML = html;
+
+  // Auto-refresh: clear any existing interval, then start a new 15s one.
+  // On each tick, check if this view's content is still in the DOM; if not,
+  // stop the interval (the user has navigated away).
+  stopGPURefresh();
+  const sentinel = container.firstElementChild;
+  _gpuRefreshInterval = setInterval(() => {
+    if (!sentinel || !sentinel.isConnected) {
+      stopGPURefresh();
+      return;
+    }
+    window.__rdb.navigate('gpus');
+  }, 15000);
 }
 
 function buildRunningMap(runs) {

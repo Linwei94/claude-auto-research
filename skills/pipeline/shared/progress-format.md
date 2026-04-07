@@ -2,6 +2,18 @@
 
 `progress/progress.md` is the **single living document** for the entire project. It is append-only and must be readable by someone with zero prior context.
 
+## Who Writes What
+
+| File | Written by | When |
+|------|-----------|------|
+| progress/progress.md | Pipeline Lead | After each phase completes — high-level narrative |
+| progress/ideation.log | Ideation Agent | During Phase 1-2 — live status updates |
+| progress/lab.log | Lab Agent | During Phase 3-8 polling — one line per experiment event |
+| progress/reviewer.log | Reviewer Agent | During gate reviews — verdict and reasoning |
+| plan/TODO.md | All agents (own phases) | Check off items as they complete |
+
+Pipeline Lead is the ONLY agent that writes to `progress/progress.md`. Other agents write to their agent-specific logs.
+
 ## When to Update
 
 - After every phase completes (Phases 0–11)
@@ -104,11 +116,46 @@
 - [anomalies, unexpected findings, open questions]
 ```
 
+> **Idea round tracking — TWO locations must stay in sync:**
+> 1. `config/config.md` field `idea_round` — **authoritative**; incremented by Pipeline Lead before rolling back to Phase 1.
+> 2. `progress/progress.md` header `**Idea round:**` — **display copy**; updated to match `config/config.md` at each phase start.
+>
+> Do NOT use a `## Idea Rounds: N` double-hash section header to track rounds — use only the two fields above.
+
+> **Progress file vs TODO:** `plan/TODO.md` is the detailed phase checklist. `progress/progress.md` is the high-level narrative. Both serve different purposes — do not replace one with the other.
+
 ## Rules
 
 1. **Phase Log is append-only** — add a new entry, never edit past entries
 2. Always update "Last updated" and "Current phase" at the top
-3. **Re-entering a completed phase** (e.g., back to Phase 5 from Phase 8): add a new entry titled `[date] — Phase N (re-attempt): [brief reason]`. Never overwrite the original entry.
+3. **Re-entering a completed phase** (e.g., back to Phase 5 from Phase 8): add a new entry titled `[date] — Phase N (re-attempt): [brief reason]`. Never overwrite the original entry. When re-entering a phase after failure: (a) Append a new Phase Log entry — DO NOT edit the old one. (b) In experiment result tables, mark failed entries with strikethrough using `~~value~~`. (c) Do NOT remove failed entries — the history must be preserved.
 4. **Experiment Results tables** are append-only; superseded results are marked inline: `~~old_value~~ (superseded by exp_id: new_exp_id)`. The new result goes on the next row.
-5. Rewrite "Key Results Summary" each time to reflect current understanding
+5. **Exception to append-only**: The "Key Results Summary" header section (top of the Experiment Results block) is overwritten each time to reflect the current best results. All Phase Log entries and experiment result tables are append-only and never edited.
 6. Keep entries concise — link to `experiments/results/*.csv` rather than pasting raw data
+
+## Re-Entry Behavior
+
+**TODO.md checkboxes on re-entry:**
+- When re-entering a phase that previously completed: revert its checkboxes from `[x]` back to `[ ]` for any items that need to be re-done. Add a comment: `<!-- re-attempt: reason -->` above the section.
+- For idea rollbacks (Phase 5 → Phase 1): the entire Phase 1-5 block reverts to `[ ]`. Increment idea_round before creating new TODO entries.
+
+**Checkbox states:**
+- `[ ]` — not yet done
+- `[x]` — completed
+- `[~]` — skipped or archived (e.g., an idea round that failed and was archived without completing all steps)
+
+**Agent logs on re-entry:**
+- `progress/ideation.log`, `progress/lab.log`, `progress/reviewer.log` are all **append-only** — never reset, even across idea rounds. Each idea round's entries are distinguishable by timestamp and idea_round prefix.
+
+**idea_round increment timing:**
+- Increment `config/config.md` field `idea_round` **before** dispatching the Ideation Agent for the new round (not after Phase 1 completes). This ensures all logs from the new round have the correct idea_round value.
+- Log the increment in progress.md: `[date] — Idea round N → N+1: [reason for rollback]`
+
+**Phase 5 rollback progress.md entry format:**
+```
+### [date] — Phase 5: Idea Round N Archived (Exhausted / User-triggered)
+- Iterations attempted: N
+- Reason for archive: [why all iterations failed or why user requested rollback]
+- Lessons file: lessons/round_N.md
+- Idea round counter: N → N+1
+```

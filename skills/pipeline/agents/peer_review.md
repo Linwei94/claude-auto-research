@@ -1,5 +1,9 @@
 # Simulated Peer Review — 6 Reviewers + Area Chair
 
+**Model**: All reviewers and the AC use `model: sonnet` (claude-sonnet-4-6) when spawned via Agent tool.
+
+**Agent type**: These are Agent-tool sub-agents. They must NOT use SendMessage. Results are written to files only.
+
 ## Overview
 
 Six specialized reviewer agents independently assess the full paper. Each reads `paper/main.tex` + `references/review_criteria.md`. After all 6 reports are in, an Area Chair (AC) synthesizes and delivers a final recommendation. The goal: find every issue a real reviewer would raise, **before submission**.
@@ -62,6 +66,9 @@ Output format:
 | Clarity | X/5 |
 | **Overall** | **X/10** |
 
+## Score Improvement Action
+What single change would raise your score by 2 points? Be specific.
+
 ## Recommendation: [Strong Accept / Accept / Weak Accept / Borderline / Weak Reject / Reject]
 ## Confidence: [Expert / High / Medium / Low]
 ```
@@ -106,7 +113,7 @@ Scoring (per venue dimension):
 - Overall recommendation: [1-10]
 
 Output format (same structure as Methodologist above):
-## Summary / ## Strengths / ## Weaknesses (with severity) / ## Questions / ## Scores / ## Recommendation / ## Confidence
+## Summary / ## Strengths / ## Weaknesses (with severity) / ## Questions / ## Scores / ## Score Improvement Action / ## Recommendation / ## Confidence
 ```
 
 ---
@@ -140,7 +147,12 @@ Your task:
 4. **Concurrent work**: Are there papers posted on arXiv in the last 6 months that do similar things?
 5. **Credit where due**: Are any equations, definitions, or figures taken from prior work without proper attribution?
 
-Note: You cannot actually search arXiv, but you can flag specific topics/authors that are likely to have relevant unpublished work the authors should check.
+**REQUIRED: Before writing your review, actively search for concurrent work:**
+```
+mcp__arxiv-mcp-server__search_papers(query="<3-5 most specific terms from paper's core contribution>", max_results=10)
+mcp__arxiv-mcp-server__search_papers(query="<alternative phrasing of the key mechanism>", max_results=10)
+```
+Report any paper from the last 18 months that shares the same core mechanism, even if framed differently. If found, the AC must assess whether the remaining delta is sufficient for acceptance.
 
 Output format (same structure as Methodologist above).
 ```
@@ -232,6 +244,9 @@ Output format:
 | Clarity | X/5 |
 | **Overall** | **X/10** |
 
+## Score Improvement Action
+What single change would raise your score by 2 points? Be specific.
+
 ## Recommendation: [Strong Accept / Accept / Weak Accept / Borderline / Weak Reject / Reject]
 ## Confidence: [Expert / High / Medium / Low]
 ```
@@ -289,12 +304,15 @@ Your task:
 1. **Synthesize**: What do the reviewers agree on? Where do they disagree?
 2. **Resolve disagreements**: When reviewers conflict (e.g., Champion says method is novel, Related Work Detective says it's not), which argument is more convincing?
 3. **Identify the critical issues**: Which weaknesses are severe enough to block acceptance? Which can be fixed in a revision?
-4. **Score aggregation**: Compute the weighted average using these weights: Devil's Advocate × 1.5, Methodologist × 1.5, Champion × 1.5 (significance), all other reviewers × 1.0. Normalize to a 10-point scale. Example: if total weight = 9.0, divide weighted sum by 9.0.
+4. **Score aggregation**: Compute the weighted average using these weights: Devil's Advocate × 1.5, Methodologist × 1.5, Champion × 1.5, all other reviewers (Empiricist, Related Work Detective, Presentation Critic) × 1.0. Total weight = 7.5 (three ×1.5 roles + three ×1.0 roles). Weighted average = (sum of weight × reviewer_score) / 7.5. Example: if total weight = 7.5, divide weighted sum by 7.5.
 5. **Decision**: Based on the scores and critical issues:
-   - **Strong Accept (≥8/10 avg)**: Exceptional paper, accept as-is
-   - **Accept (≥6.5/10 avg, no fatal flaws)**: Good paper, accept with minor revisions
-   - **Weak Accept / Borderline (5.5–6.5/10)**: Interesting but has significant fixable issues — conditional accept pending revision
-   - **Reject (<5.5/10, or any fatal flaw)**: Does not meet the bar; list exact reasons
+   - **ACCEPT (weighted score ≥ 7.5)**: Exceptional paper, accept as-is or with minor revisions
+   - **WEAK_ACCEPT (weighted score 6.5–7.4)**: Good paper, accept with minor revisions
+   - **BORDERLINE (weighted score 5.0–6.4)**: Interesting but has significant fixable issues — conditional accept pending revision
+   - **WEAK_REJECT (weighted score 3.5–4.9)**: Below bar; significant gaps; list exact reasons
+   - **REJECT (weighted score ≤ 3.4, or any fatal flaw)**: Does not meet the bar; list exact reasons
+
+   **Fatal flaw mapping**: A Devil's Advocate severity rating of "Fatal" = automatic REJECT regardless of other scores or weighted average.
 
 For ACCEPT or Weak Accept: specify the revision requirements (must-fix before camera-ready).
 For REJECT: specify the primary reason clearly.
@@ -330,9 +348,9 @@ Output format:
 | Significance | X/5 |
 | Clarity | X/5 |
 
-## AC Decision: [Strong Accept / Accept / Weak Accept / Borderline / Reject]
+## AC Decision: [ACCEPT / WEAK_ACCEPT / BORDERLINE / WEAK_REJECT / REJECT]
 
-### Revision Requirements (if Accept / Weak Accept)
+### Revision Requirements (if ACCEPT / WEAK_ACCEPT)
 1. [required change 1]
 2. [required change 2]
 
@@ -350,19 +368,25 @@ Output format:
 
 ### Round 1: Parallel Review
 
-Spawn all 6 reviewer agents simultaneously. Each independently reads the full paper and produces a complete report.
+Spawn all 6 reviewer agents simultaneously (`run_in_background: true`). Each independently reads the full paper and produces a complete report.
+
+**Timeout handling**: Each reviewer has a max 30-minute window. If a reviewer agent does not complete within 30 minutes:
+- Mark that reviewer as "timed out" in `plan/simulated_peer_review.md`
+- Proceed with remaining reviewers (do NOT block AC on a single timeout)
+- AC adjusts weighted aggregation: exclude the timed-out reviewer's weight from the denominator (recalculate total weight from remaining reviewers)
+- Note in AC meta-review: "Reviewer X timed out — score excluded from aggregation"
 
 ### Round 2: AC Meta-Review
 
-After all 6 reports are collected, spawn the AC agent with all 6 reports. AC writes the meta-review and delivers a decision.
+After all responding reviewer reports are collected (or timeout reached), spawn the AC agent with all available reports. AC writes the meta-review and delivers a decision.
 
 ### Round 3: Issue Resolution
 
 Based on the AC decision:
 
-**Strong Accept / Accept**: Address all revision requirements and nice-to-haves where possible. Commit updated paper.
+**ACCEPT**: Address all revision requirements and nice-to-haves where possible. Commit updated paper.
 
-**Weak Accept / Borderline**: Fix all "Critical Issues" and revision requirements. Re-run the Methodologist and Empiricist (only) on the updated paper to verify fixes. If they now pass → proceed. If not → continue fixing.
+**WEAK_ACCEPT / BORDERLINE**: Fix all "Critical Issues" and revision requirements. Re-run the Methodologist and Empiricist (only) on the updated paper to verify fixes. If they now pass → proceed. If not → continue fixing.
 
 **Reject**: Do NOT proceed to submission. Instead:
 1. Document the primary rejection reason in `plan/simulated_peer_review.md`
@@ -413,7 +437,7 @@ Save the full debate record to `plan/simulated_peer_review.md`:
 ## AC Meta-Review
 [full AC meta-review]
 
-## AC Decision: [Strong Accept / Accept / Weak Accept / Borderline / Reject]
+## AC Decision: [ACCEPT / WEAK_ACCEPT / BORDERLINE / WEAK_REJECT / REJECT]
 
 ## Issues Addressed (post-review)
 - [issue] — fixed by [change] — [commit hash]

@@ -200,10 +200,24 @@ export async function refresh() {
     // Discard results if project switched while fetch was in-flight
     if (state.project !== capturedProject) return;
     if (resResult.status === 'fulfilled') state.research = resResult.value;
+    if (resResult.status === 'rejected') {
+      // Project not found or server error
+      state.research = null;
+      // Show "project not found" message instead of crashing
+      document.querySelector('#view-container').innerHTML =
+        `<div style="padding:2rem;color:var(--text-dim);text-align:center">
+          <h3>Project not found</h3>
+          <p>Project "<em>${escHtml(capturedProject)}</em>" does not exist or has been deleted.</p>
+          <p>Select a project from the sidebar, or check that the project directory exists.</p>
+        </div>`;
+      return;
+    }
     // phase may 404 if TODO.md doesn't exist yet — keep previous value
     if (phaseResult.status === 'fulfilled') state.phase = phaseResult.value;
     updateSidebarStats();
-    renderView();
+    // Skip re-rendering paper view on background refresh to avoid resetting
+    // the PDF iframe scroll position while the user is reading.
+    if (state.view !== 'paper') renderView();
     document.getElementById('last-updated').textContent =
       new Date().toLocaleTimeString();
   } catch (e) {
@@ -267,7 +281,8 @@ function loadProjectList() {
       el.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${escHtml(p.name)}</span><span class="proj-phase-badge" data-proj="${escHtml(p.name)}"></span>`;
       el.onclick = () => {
         selectProject(p.name);
-        if (state.view === 'gpus') navigate('runs');
+        if (state.view === 'gpus') navigate('paper');
+        else navigate('paper');
       };
       list.appendChild(el);
     });
@@ -305,27 +320,32 @@ function connectSSE() {
 
     _sse.onopen = () => {
       dot.className = 'connected';
-      dot.title = 'Live updates active';
+      dot.title = 'Connected (manual refresh only)';
       clearInterval(_pollTimer);
     };
 
     _sse.onmessage = (e) => {
       try {
         const ev = JSON.parse(e.data);
-        if (ev.type === 'run_update') refresh();
+        // Only update the phase badge on SSE events — no automatic data refresh.
+        // User refreshes manually via the refresh button.
+        if (ev.type === 'connected' && ev.phase) {
+          const badge = document.querySelector(`.proj-phase-badge[data-proj="${CSS.escape(state.project)}"]`);
+          if (badge) badge.textContent = ev.phase;
+        }
       } catch (_) {}
     };
 
     _sse.onerror = () => {
       if (_sse) { _sse.close(); _sse = null; }
       dot.className = 'polling';
-      dot.title = 'Live updates unavailable — polling every 20s';
+      dot.title = 'SSE disconnected';
       clearInterval(_pollTimer);
-      _pollTimer = setInterval(refresh, 20_000);
+      // No auto-polling — user refreshes manually.
     };
   } catch (_) {
     dot.className = 'polling';
-    _pollTimer = setInterval(refresh, 20_000);
+    _pollTimer = setInterval(refresh, 30_000);
   }
 }
 
@@ -361,13 +381,24 @@ function init() {
   setupResize('sb-resize-1', 'project-list',    'rdb:proj-h',  24, 300);
   setupResize('sb-resize-2', 'phase-group-list', 'rdb:phase-h', 40, 320);
 
-  // Navigate to GPU view initially (works without project)
-  navigate('gpus');
-
-  // Restore last project
-  const saved = localStorage.getItem('rdb:project');
-  if (saved) {
-    selectProject(saved).then(() => navigate('runs')).catch(() => {});
+  // Auto-select project from URL path (e.g. /ttac-calibration) or ?project= param
+  const urlPathProject = window.location.pathname.replace(/^\//, '').split('/')[0];
+  const urlQueryProject = new URLSearchParams(window.location.search).get('project');
+  const urlProject = urlPathProject || urlQueryProject;
+  if (urlProject) {
+    // Project known from URL — go straight to paper
+    navigate('paper');
+    selectProject(urlProject).catch(() => {});
+  } else {
+    // Restore last project from localStorage, or fall back to GPU view
+    const saved = localStorage.getItem('rdb:project');
+    if (saved) {
+      navigate('paper');
+      selectProject(saved).catch(() => {});
+    } else {
+      // No project known — GPU view works without a project
+      navigate('gpus');
+    }
   }
 }
 
@@ -443,4 +474,21 @@ function applyTheme(theme) {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => { initTheme(); init(); });
+// ── Mobile sidebar toggle ─────────────────────────────────────────────────────
+
+function initMobileMenu() {
+  const btn = document.getElementById('menu-toggle');
+  const sidebar = document.getElementById('sidebar');
+  if (!btn || !sidebar) return;
+  btn.onclick = () => {
+    sidebar.classList.toggle('mobile-open');
+  };
+  // Close sidebar when a nav link is clicked on mobile
+  sidebar.querySelectorAll('.nav-link, .sidebar-project-item').forEach(el => {
+    el.addEventListener('click', () => {
+      if (window.innerWidth <= 768) sidebar.classList.remove('mobile-open');
+    });
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => { initTheme(); init(); initMobileMenu(); });

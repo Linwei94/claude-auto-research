@@ -1,8 +1,30 @@
 # Result Debate — Multi-Perspective Experiment Analysis
 
+**Model**: All agents use `model: sonnet` (claude-sonnet-4-6) when spawned via Agent tool.
+
+**Agent type**: These are Agent-tool sub-agents. They must NOT use SendMessage. Results are written to files only.
+
 ## Overview
 
 After experiments complete, use 6 specialized subagents to analyze results from different perspectives. This ensures results are interpreted rigorously, weaknesses are identified before submission, and the narrative is strengthened.
+
+## Data Summarization for Agent Prompts
+
+**Context window management**: Do NOT paste the entire `all_results.csv` into each agent prompt — for large experiments this overflows context. Instead, pass a compact summary:
+
+```python
+# Generate summary for agent prompts (run before spawning agents)
+import pandas as pd
+df = pd.read_csv("experiments/results/all_results.csv")
+# Pivot to mean ± std table per method × dataset
+pivot = df.groupby(["method","dataset","metric"])["value"].agg(["mean","std","count"])
+pivot["mean"] = pivot["mean"].round(2)
+pivot["std"] = pivot["std"].round(2)
+summary = pivot.to_string()
+print(summary)  # Paste this ~500-token summary into agent prompts
+```
+
+Replace `[paste key results tables/CSVs]` in each prompt with this pivot summary. Also include `experiments/results/significance_tests.csv` contents (smaller). Full `all_results.csv` is available for agents that need raw data — they can read it via Read tool.
 
 ## The 6 Analysis Agents
 
@@ -56,6 +78,8 @@ Your task:
 6. Check for p-hacking: Were many configurations tried and only the best reported? Was the evaluation metric chosen after seeing results?
 
 Be rigorous but fair. The goal is to catch problems before reviewers do.
+
+If `p_value` is None/null for any primary comparison in `significance_tests.csv` (< 3 seeds), you MUST rate Statistical Validity as **weak** for that comparison, regardless of other evidence. Do not infer significance from the effect size alone.
 
 Output format:
 - Statistical validity assessment (strong/adequate/weak)
@@ -165,7 +189,9 @@ Your task:
 Use web search if needed to check for very recent competing methods.
 
 Output format:
-- SOTA positioning: [new SOTA / competitive / below SOTA] per benchmark
+- SOTA positioning per benchmark: [new SOTA / competitive / weak]
+  Use exactly these labels — "weak" means not competitive on most benchmarks; "competitive" means matches or exceeds SOTA on ≥2 benchmarks
+- **Competitive Standing**: one of **competitive** or **weak** (required for analysis.md §9.2 Go/No-Go gate)
 - Missing baselines that must be added
 - Win/loss pattern analysis
 - Compute efficiency comparison
@@ -210,14 +236,14 @@ Output format:
 
 Spawn all 6 agents simultaneously with the full results data. Each independently analyzes from their perspective.
 
-**Each agent outputs a structured response following the format specified in their prompt template** (see "Output format" in each prompt above). Collect all 6 outputs and paste them into the corresponding sections of `plan/result_debate.md` before proceeding to synthesis. Individual agent outputs are NOT discarded — they form the evidence base for the synthesis.
+**Each agent outputs a structured response following the format specified in their prompt template** (see "Output format" in each prompt above). Each agent appends their section directly to `plan/result_debate.md` using their agent role as the section header (e.g., `### Optimist`, `### Skeptic`). Individual agent outputs are NOT discarded — they form the evidence base for the synthesis. All 6 sections must be present in `plan/result_debate.md` before proceeding to synthesis.
 
 ### Round 2: Synthesis and User Review
 
 After collecting all 6 perspectives:
 
 1. **Synthesize** into a structured report:
-   - **Consensus findings**: What do multiple agents agree on?
+   - **Consensus findings**: What do multiple agents agree on? **Consensus = a finding mentioned by ≥3 of 6 agents. Majority = ≥4 of 6.**
    - **Conflicts**: Where do agents disagree? (e.g., Optimist says results are strong, Skeptic says they're not significant)
    - **Action items**: Concrete next steps, prioritized
    - **Narrative recommendation**: The best story for the paper, supported by evidence
@@ -230,6 +256,10 @@ After collecting all 6 perspectives:
 ### Round 3: Focused Re-analysis (if needed)
 
 If additional experiments are run based on the debate, re-run Skeptic and Comparativist on the updated results to verify the new experiments address their concerns.
+
+Round 3 is a single pass — no further rounds. After Round 3:
+- If Skeptic and Comparativist are now satisfied → update verdict (may upgrade RESULTS_WEAK → RESULTS_SUFFICIENT)
+- If still not satisfied → maintain current verdict (do NOT run Round 4). Record specific remaining concerns in the synthesis.
 
 ### Output
 
@@ -274,4 +304,29 @@ Save to `plan/result_debate.md`:
 
 ## Acknowledged Limitations
 [honest limitations to include in the paper's discussion section]
+```
+
+## Verdict (Required)
+
+**Synthesis is done by Lab Agent** (not a sub-agent): After all 6 agent sections are written to `plan/result_debate.md`, Lab Agent reads the full debate file and applies the rules below to assign the final verdict. Lab Agent is the "parent" here — it does not spawn an AC sub-agent for this step.
+
+After reading all 6 sections, Lab Agent assigns ONE verdict based on consensus:
+
+**RESULTS_SUFFICIENT**: ≥4/6 agents agree results validate the core hypothesis → GO. Proceed with paper writing.
+
+**RESULTS_WEAK**: exactly 3/6 agents agree results are valid → additional experiments recommended. Return to Phase 8 with specific experiment requests.
+
+**RESULTS_FATAL**: ≥4/6 agents agree the core hypothesis is fundamentally flawed or results are fundamentally inconsistent → NO-GO. Escalate to Pipeline Lead: present finding, recommend ROLLBACK to Phase 1 (new idea).
+
+**Tie-break** (3:3 split with no clear FATAL): default to RESULTS_WEAK (conservative — run more experiments before committing to paper).
+
+Add verdict at bottom of `plan/result_debate.md`:
+```markdown
+## Verdict: [RESULTS_SUFFICIENT / RESULTS_WEAK / RESULTS_FATAL]
+
+**Decision**: [1-sentence justification]
+
+**Next Steps**:
+- [action 1]
+- [action 2]
 ```

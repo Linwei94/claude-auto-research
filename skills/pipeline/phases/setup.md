@@ -11,6 +11,7 @@
 - `references/venue_requirements.md`
 - `plan/TODO.md`
 - `progress/progress.md` (initial entry)
+- `progress/team_state.json` — team coordination state for crash recovery
 - `README.md`, `.gitignore`
 - `dispatch/state.json` (empty)
 - Git repo initialized and pushed
@@ -19,20 +20,116 @@
 
 ## Step 0.1: Ask User Questions
 
+**Pipeline mode is always `paper`** — full pipeline ending in a conference submission. Do NOT ask the user about mode. Save `mode: paper` to `config/config.md` directly.
+
 Use `AskUserQuestion` for the following (can be a single multi-question call):
-
-**Question 0 — Pipeline Mode:**
-- `paper` (default): full pipeline → write and submit to a venue
-- `research-only`: validate algorithm, generate `report/research_report.md`, no LaTeX paper
-
-Save the mode to `config/config.md` as `mode: paper` or `mode: research-only`. All subsequent phases check this field at their entry gate. If `research-only`, skip Phases 10–11 and go to Phase 9.5 instead.
 
 **Question 1 — Target Venue:**
 - Options: NeurIPS / ICML / ICLR / CVPR / ECCV / ACL / AAAI / Other
-- If mode is `research-only`, venue is optional (used for framing the report, not submission)
 
 **Question 2 — Research Topic:**
 - Options: LLM efficiency / Robustness / Multimodal / RL/Agents / Other (free text)
+
+## Step 0.1b: Set Up Artifact Storage — Hugging Face Hub
+
+Model checkpoints go to Hugging Face Hub: large free storage (unlimited LFS for public repos, 1 TB for private repos), easy to browse/compare/download, and it integrates with the dashboard's HF links.
+
+Ask the user **conversationally** — react to their answers, don't dump all options at once:
+
+---
+
+**Turn 1** (Pipeline Lead says):
+
+> "I'd like to store model checkpoints on Hugging Face Hub — this keeps local disk free and makes tracing and comparison easy later.
+>
+> Do you have a Hugging Face account? Let me check your login status first."
+
+Then run:
+```bash
+huggingface-cli whoami 2>&1
+```
+
+- If logged in → extract username → skip to Turn 3
+- If not logged in → Turn 2
+
+---
+
+**Turn 2** (only if not logged in):
+
+> "You're not logged in yet. To set it up:
+>
+> 1. Go to https://huggingface.co/settings/tokens and generate a **Write** token
+> 2. Run: `huggingface-cli login`
+>
+> Tell me when that's done and I'll continue."
+
+Wait for user to confirm. Re-run `huggingface-cli whoami` to verify. **Do NOT proceed until login succeeds.**
+
+---
+
+**Turn 3** (after username known, ask about visibility):
+
+> "Got it — your HF account is **[username]**.
+>
+> I'll create a HF repo to store all checkpoints for this project:
+> `[username]/[project-slug]-artifacts`
+>
+> Should this be **public** or **private**?
+> - Public: unlimited free LFS storage, but repo is publicly visible
+> - Private: 1 TB free, content stays hidden
+>
+> (Recommended: private until the paper is published — you can make it public afterwards to aid reproducibility)"
+
+---
+
+**Turn 4** (after user answers public/private):
+
+Create the repo:
+```bash
+huggingface-cli repo create [project-slug]-artifacts --type model --[public|private]
+```
+
+Then verify:
+```bash
+huggingface-cli repo info [username]/[project-slug]-artifacts
+```
+
+If creation succeeds → confirm to user:
+> "✓ HF repo created: https://huggingface.co/[username]/[project-slug]-artifacts
+>
+> After each experiment, checkpoints will be uploaded here organized by exp_id. wandb tracks metrics and training curves; HF stores model weights; the dashboard links to both."
+
+---
+
+**Verify write permission** — test that your token has write access:
+```bash
+echo "write_test" > /tmp/hf_write_test.txt
+huggingface-cli upload <project-slug>-artifacts /tmp/hf_write_test.txt hf_write_test.txt 2>&1 | grep -i "error\|403\|permission" && echo "❌ Write permission denied" || echo "✓ Write permission OK"
+rm -f /tmp/hf_write_test.txt
+```
+**On 403/permission error**: Token is read-only — go to hf.co/settings/tokens, create a new Write token (recommend fine-grained, scoped to this repo only), re-run `huggingface-cli login`.
+
+**On error** (repo already exists, name conflict, etc.):
+- Ask user: "Repo `[name]` already exists — use it as-is, or choose a different name?"
+- If use existing: verify write access with a test upload, then proceed
+- If rename: ask for new suffix and retry
+
+Save to `config/config.md`:
+- `hf_username: [username]`
+- `hf_artifact_repo: [username]/[project-slug]-artifacts`
+- `artifact_base: huggingface`  (tells Lab Agent to use HF Hub as the artifact store)
+
+**Checkpoint path convention on HF** (Lab Agent uses this):
+```
+[hf_artifact_repo]/checkpoints/[EXP_ID]/best.pt
+[hf_artifact_repo]/checkpoints/[EXP_ID]/epoch_N.pt   (optional intermediate)
+```
+URL format: `https://huggingface.co/[hf_artifact_repo]/blob/main/checkpoints/[EXP_ID]/best.pt`
+
+**Local checkpoint during training** (temp only):
+- Scripts save to `/tmp/ckpt_[EXP_ID]/` during training (needed for resume)
+- After training ends: upload to HF → delete local temp dir
+- If `__wandb_only__` fallback needed (HF unavailable): upload wandb artifact instead, flag in sidecar
 
 ## Step 0.2: Discover Compute Resources
 
@@ -50,37 +147,57 @@ Then present a **multi-select** question listing all reachable machines with GPU
 **Also ask about external clusters:**
 
 > "Will you run experiments on any external clusters?
-> - C500 (MetaX/SenseTime platform) — invoke `use-c500` skill now for setup
-> - Gadi (NCI Australia) — invoke `use-gadi` skill now for environment config
+> - C500 (MetaX/SenseTime platform)
+> - Gadi (NCI Australia)
 > - Neither — skip"
 
-**If C500 selected:** invoke the `use-c500` skill immediately. Record in `config/config.md`:
-```markdown
-## External Clusters
-- C500: AFS base = /mnt/afs/lixiaoou/intern/linweitao, env = metax_pt
-  - tracker pending_sync: /mnt/afs/lixiaoou/intern/linweitao/<project>/experiments/results/pending_sync
-  - sync command (run from localhost): see shared/cluster-sync.md
-```
+**If C500 selected:** Ask the user for their AFS allocation path (e.g., `echo $AFS_HOME` on finn_cci_c500), then record in `config/config.md` under "## External Clusters":
+- C500 CCI machine: finn_cci_c500 (testing only, 1-2 samples)
+- C500 platform: submit via `sco acp jobs create` (actual experiments)
+- AFS base path: **[ask user — run `echo $AFS_HOME` on CCI to find it]** (e.g. `/mnt/afs/<username>/intern/<yourname>`)
+- Pending sync path: `<AFS_BASE>/<PROJECT>/experiments/results/pending_sync`
+- Docker image: metax_pt (or maca31_pt if CUDA errors) — ask user which image their team uses
 
-**If Gadi selected:** invoke the `use-gadi` skill immediately. Record in `config/config.md`:
-```markdown
-## External Clusters
-- Gadi: scratch = /scratch/li96/lt2442, venv = /scratch/li96/lt2442/.venv
-  - tracker pending_sync: /scratch/li96/lt2442/<project>/experiments/results/pending_sync
-  - sync command (run from localhost): see shared/cluster-sync.md
-  - active debug node: <user will provide when ready>
-```
+**If Gadi NCI is selected:** Ask the user for their NCI project code and scratch allocation, then record in `config/config.md` under "## External Clusters":
+- Gadi login: gadi.nci.org.au
+- Project code: **[ask user — check `id` or `nci_account_info` on Gadi]**
+- Scratch path: **[ask user — typically `/scratch/<PROJECT_CODE>/<username>`]**
+- Pending sync path: `<SCRATCH_BASE>/<PROJECT>/experiments/results/pending_sync`
+- Default queue: gpuvolta
+- Modules: module load cuda/11.7.0 python3/3.10.4 (confirm with user — NCI module versions change)
 
-**Important:** Experiments on C500/Gadi are dispatched differently from local machines:
-- C500: no supervisor — use `sco acp jobs create` manually (see `use-c500` skill)
-- Gadi: supervisor can SSH to debug nodes via gadi login node (add to `supervisor/config.json` → `slurm_hosts: ["gadi"]` only if using PBS batch; for debug nodes use SSH directly)
+## Step 0.2b: Validate team_name
+
+Before saving config.md, verify `team_name` matches `ar-<project-slug>` (kebab-case, starts with `ar-`, e.g. `ar-tta-calibration`). Correct if not. The `ar-` prefix ensures unique team names — without it, SendMessage routing can silently deliver messages to the wrong session.
 
 ## Step 0.3: Save Configuration
 
 Save to `config/config.md`:
 
 ```markdown
+# Note: This file may contain internal paths and usernames.
+# Review before pushing to a public repository.
+# Do NOT add API keys or passwords here — use environment variables instead.
+
 # Project Configuration
+
+project_name: <project-name>
+team_name: ar-<project-slug>
+idea_round: 1
+mode: paper
+wandb_project: <project-name>     # must match wandb.init(project=...) in experiment scripts
+wandb_entity: <wandb-username>    # extracted from `wandb status`; required for export_results.py
+conda_env: ar_<project-slug>      # conda environment name used by ENV agents on all remote machines
+                                  # Note: replace hyphens in project-slug with underscores for conda compatibility.
+                                  # E.g., `ar_tta_calibration` (not `ar_tta-calibration`).
+                                  # Generate with: `echo "ar_${PROJECT_SLUG//-/_}"`
+artifact_base: huggingface                               # artifact store: "huggingface" | "__per_machine__" | "__wandb_only__"
+hf_username: <huggingface-username>                      # from `huggingface-cli whoami`
+hf_artifact_repo: <hf_username>/<project-slug>-artifacts # HF repo for model checkpoints and artifacts
+# Only include these if you selected the corresponding cluster in Step 0.2:
+# (omit entirely if not using C500 / Gadi — leave-as-<FILL_IN> will confuse exec agents)
+c500_afs_base: <FILL_IN>   # AFS base path on C500 — ask user; run `echo $AFS_HOME` on finn_cci_c500
+gadi_scratch_base: <FILL_IN>  # Scratch base path on Gadi — ask user; typically /scratch/<PROJECT_CODE>/<username>
 
 ## Target Venue
 [venue name]
@@ -95,6 +212,18 @@ Save to `config/config.md`:
 ## Selected Machines
 - [machine 1]
 - [machine 2]
+```
+
+**After saving config.md**: extract and update `wandb_entity`:
+```bash
+# Use portable approach (no lookbehind, works with both GNU grep and macOS grep)
+WANDB_ENTITY=$(wandb status 2>&1 | grep -i "logged in" | grep -oE '[a-zA-Z0-9_-]+$' | head -1)
+if [ -z "$WANDB_ENTITY" ]; then
+  echo "WARNING: Could not auto-extract wandb_entity. Run 'wandb status' manually and update config/config.md."
+else
+  echo "wandb_entity: $WANDB_ENTITY"
+  # Update the field in config/config.md (use Edit tool, not sed, to avoid race conditions)
+fi
 ```
 
 ## Step 0.4: Create Writing Constraints
@@ -143,7 +272,10 @@ Save to `references/venue_requirements.md`.
 │   ├── idea_history.md      (created empty)
 ├── lessons/                 (one .md per failed iteration round — written by Phase 5)
 ├── progress/
-│   └── progress.md
+│   ├── progress.md          (pipeline lead log)
+│   ├── ideation.log         (ideation agent log)
+│   ├── lab.log              (lab agent log)
+│   └── reviewer.log         (reviewer agent log)
 ├── references/
 │   └── venue_requirements.md
 ├── experiments/
@@ -167,10 +299,68 @@ Save to `references/venue_requirements.md`.
 Git doesn't track empty directories. Create `.gitkeep` so `lessons/` and all `experiments/` subdirs are committed:
 
 ```bash
-mkdir -p lessons experiments/{models,methods,scripts,utils,configs,results,logs,checkpoints,archived} paper/figures dispatch plan config progress references
+mkdir -p lessons experiments/{models,methods,scripts,utils,configs,results,logs,checkpoints,archived,pbs} paper/figures dispatch plan config progress references
 touch lessons/.gitkeep
-touch experiments/{models,methods,scripts,utils,configs,results,logs,checkpoints,archived}/.gitkeep
+touch experiments/{models,methods,scripts,utils,configs,results,logs,checkpoints,archived,pbs}/.gitkeep
 touch paper/figures/.gitkeep
+touch progress/ideation.log progress/lab.log progress/reviewer.log
+```
+
+### Create .gitignore
+
+Create `.gitignore` in the project root before git init:
+
+```bash
+cat > .gitignore << 'GITIGNORE_EOF'
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+venv/
+
+# Model weights and large binaries
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.npz
+
+# Result files that shouldn't be tracked
+experiments/results/*.npy
+experiments/results/*.pkl
+experiments/results/pending_sync/
+
+# Datasets (usually too large for git)
+datasets/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Environment secrets
+.env
+*.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# Runtime experiment state (contains PID, host, GPU info - not for git history)
+dispatch/*.status.json
+# Main state.json should be tracked (used for cross-machine coordination)
+# dispatch/state.json  <- DO track this one
+
+# Log files (may contain internal hostnames, WandB URLs)
+progress/*.log
+progress/notifications.log
+
+# Config file contains usernames and internal paths - review before sharing
+# Uncomment to exclude from git (use config/config.md.template as tracked template instead):
+# config/config.md
+GITIGNORE_EOF
 ```
 
 ### Git Init
@@ -190,7 +380,104 @@ Use `--private` (unpublished research). Repo name: short kebab-case (e.g., `ttac
 {"project": "<project-name>", "updated": "<timestamp>", "experiments": []}
 ```
 
+Sample experiment entry structure (added by Lab Agent in Phase 4):
+```json
+{
+  "id": "exp_001", "phase": "Phase 4", "status": "pending",
+  "host": "xuchang-lab1", "gpu": 0,
+  "pid": null,       "job_id": null,
+  "command": "python train.py --config configs/exp1.yaml",
+  "started": null, "finished": null,
+  "retry_count": 0, "max_retries": 3,
+  "result_file": "experiments/results/exp_001.json",
+  "expected_duration_hours": 4.0,
+  "wandb_run_id": null,
+  "group": "main",
+  "priority": 1, "notes": ""
+}
+```
+
+**Field notes:**
+- `pid`: used by local (xuchang-lab*) exec agents — process ID for nohup job
+- `job_id`: used by C500 (`sco acp jobs create`) and Gadi (PBS `qsub`) exec agents — cluster job ID
+- `group`: one of `main`, `baseline`, `ablation`, `analysis` — used by wandb grouping
+- Full schema with all Phase 8 fields (pbs_script_path, gadi_walltime_hours, etc.) is written by Lab Agent in Phase 4/8. The above shows minimum Phase 4 fields.
+
+### Set Up Tmux Split Panes
+
+Run **immediately after creating the progress/ directory**. Creates a 2×2 split layout so each agent's log is visible in a dedicated pane.
+
+```bash
+PROJECT_DIR=$(pwd)
+if [ -n "$TMUX" ]; then
+  # Create a new window named after the project
+  tmux new-window -n "auto-research"
+  # Build 2×2 grid: top-left, bottom-left, top-right, bottom-right
+  tmux split-window -h -p 50
+  tmux select-pane -t 0 && tmux split-window -v -p 50
+  tmux select-pane -t 2 && tmux split-window -v -p 50
+  # Pane 0 — Pipeline Lead: tail progress.md
+  tmux select-pane -t 0
+  tmux send-keys "printf '\033[0;36m══ Pipeline Lead ══\033[0m\n' && \
+    touch $PROJECT_DIR/progress/progress.md && \
+    tail -f --retry $PROJECT_DIR/progress/progress.md" Enter
+  # Pane 1 — Ideation Agent
+  tmux select-pane -t 1
+  tmux send-keys "printf '\033[0;33m══ Ideation Agent ══\033[0m\n' && \
+    tail -f --retry $PROJECT_DIR/progress/ideation.log" Enter
+  # Pane 2 — Lab Agent
+  tmux select-pane -t 2
+  tmux send-keys "printf '\033[0;32m══ Lab Agent ══\033[0m\n' && \
+    tail -f --retry $PROJECT_DIR/progress/lab.log" Enter
+  # Pane 3 — Reviewer Agent
+  tmux select-pane -t 3
+  tmux send-keys "printf '\033[0;31m══ Reviewer Agent ══\033[0m\n' && \
+    tail -f --retry $PROJECT_DIR/progress/reviewer.log" Enter
+  # Return focus to pane 0 (Pipeline Lead)
+  tmux select-pane -t 0
+else
+  echo "⚠️  Not in a tmux session — split pane setup skipped."
+  echo "    To get split panes later, run inside tmux and re-run this script block:"
+  echo "    tmux new-window -n auto-research && <split commands from Phase 0.6>"
+fi
+```
+
+**Layout:**
+```
+┌────────────────────┬────────────────────┐
+│  Pipeline Lead     │  Lab Agent         │
+│  progress.md       │  lab.log           │
+├────────────────────┼────────────────────┤
+│  Ideation Agent    │  Reviewer Agent    │
+│  ideation.log      │  reviewer.log      │
+└────────────────────┴────────────────────┘
+```
+
+### Verify wandb authentication (MANDATORY)
+
+```bash
+WANDB_STATUS=$(wandb status 2>&1 | head -5)
+if echo "$WANDB_STATUS" | grep -qi "logged in"; then
+  echo "✓ wandb authenticated"
+else
+  echo "FATAL: wandb not authenticated. Run: wandb login"
+  echo "Do NOT proceed to Phase 1 until wandb is authenticated."
+  echo "Experiments will silently fail to log metrics without authentication."
+  exit 1
+fi
+```
+
+**FATAL if not resolved**: experiments will silently fail to log metrics, and Phase 9 analysis will have no data. Do NOT proceed to Phase 1 until wandb is authenticated.
+
+**If `wandb login` fails** (network error, bad API key, corporate proxy):
+- Retry: `wandb login --relogin` (prompts for key again)
+- If wandb.ai is unreachable from this machine: set `WANDB_MODE=offline` in your shell, add `wandb_mode: offline` to `config/config.md`, and run `wandb sync <run_dir>` after experiments complete to upload logs retroactively.
+
 ### Verify supervisor (MANDATORY — pipeline cannot proceed without this)
+
+**First-time supervisor setup** (skip if already installed): If `~/supervisor/supervisor.py` does not yet exist, follow `shared/supervisor-setup.md` to install the supervisor service. This is a one-time step per machine.
+
+> **What is the supervisor?** It is a long-running Python process (`~/supervisor/supervisor.py`) that polls `dispatch/state.json` and launches queued experiments. Without it, experiments added to the queue during Phase 4/8 will never start.
 
 ```bash
 if systemctl is-active experiment-supervisor >/dev/null 2>&1; then
@@ -202,15 +489,16 @@ else
   if pgrep -f "supervisor/supervisor.py" >/dev/null; then
     echo "✓ supervisor started successfully"
   else
-    echo "FATAL: supervisor failed to start. See shared/supervisor-setup.md"
-    echo "Do NOT proceed to Phase 1 until supervisor is running."
-    echo "Pipeline cannot queue or launch experiments without it."
+    echo "FATAL: supervisor failed to start."
+    echo "Fix: open a new terminal and follow the setup guide at:"
+    echo "  shared/supervisor-setup.md (relative to plugin root)"
+    echo "Then reply 'supervisor fixed' to continue Phase 0."
     exit 1
   fi
 fi
 ```
 
-**If exit 1 triggers:** fix the supervisor manually using `shared/supervisor-setup.md`, then re-run Phase 0 from Step 0.6. **Do not skip this check** — if supervisor is not running during Phase 8, experiments will queue but never launch and the pipeline will hang indefinitely.
+**If exit 1 triggers:** open a new terminal, follow `shared/supervisor-setup.md` (relative to plugin root), then reply "supervisor fixed" to continue. **Do not skip this check** — if supervisor is not running during Phase 8, experiments will queue but never launch and the pipeline will hang indefinitely.
 
 ## Step 0.7: Start Result Shower
 
@@ -222,7 +510,11 @@ python3 -c "import socket; print(f'Result Shower: http://{socket.gethostbyname(s
 
 **If `~/result_shower/server.py` not found:** the symlink is missing. Run:
 ```bash
-ln -sf ~/.claude/skills/autoresearch-dashboard ~/result_shower
+# Find the actual plugin path first, then create the symlink
+PLUGIN_DASHBOARD=$(python3 -c "import glob; matches=glob.glob(os.path.expanduser('~/.claude/plugins/cache/*/auto-research/*/skills/dashboard')); print(matches[0] if matches else 'NOT_FOUND')" 2>/dev/null || \
+  echo "~/.claude/plugins/cache/linwei/auto-research/1.0.0/skills/dashboard")
+ln -sf "$PLUGIN_DASHBOARD" ~/result_shower
+ls ~/result_shower/server.py && echo "✓ symlink OK" || echo "ERROR: symlink broken — check plugin path"
 ```
 Full setup guide: `shared/result-shower-setup.md`
 
@@ -241,6 +533,7 @@ Create the master todolist. See template below. Check off all Phase 0 items.
 
 ## Phase 0: Setup ✓
 - [x] Venue and topic collected
+- [x] Hugging Face Hub repo created (hf_artifact_repo in config.md)
 - [x] Compute resources discovered and selected
 - [x] config/config.md saved
 - [x] config/constraints.md saved
@@ -257,6 +550,8 @@ Create the master todolist. See template below. Check off all Phase 0 items.
 - [ ] Idea debate — 6 reviewers + AC gate (plan/idea_debate.md)
 - [ ] Idea refinement (plan/idea_summary.md)
 - [ ] Idea history initialized (plan/idea_history.md)
+- [ ] External idea review — Mode E gate (plan/idea_brief.md → Reviewer Agent)
+- [ ] Mode E STRONG_ACCEPT — user approved → proposal writing authorized
 - [ ] → git commit & push
 - [ ] → notify-telegram: Phase 1 complete
 
@@ -314,12 +609,21 @@ Create the master todolist. See template below. Check off all Phase 0 items.
 - [ ] Go/No-Go gate: [GO / NO-GO]
 - [ ] → git commit & push
 
+## Phase 9.5: Research Report (research-only mode only)
+*Skip this phase entirely if `mode: paper`.*
+- [ ] Research report generated (progress/research_report.md)
+- [ ] → git commit & push
+- [ ] → notify-telegram: Research report complete. Pipeline finished.
+*If this phase is complete, pipeline is DONE. Skip Phases 10–12.*
+
 ## ⏸ Human Approval Gate (between Phase 9 and Phase 10)
+*Skip this gate if `mode: research-only` — proceed directly to Phase 9.5 above.*
 - [ ] Phase 9 GO notification sent to user (with full results summary)
 - [ ] **User explicitly said "开始写" / "start writing" / "proceed"**
 - [ ] Do NOT start Phase 10 until this box is checked
 
 ## Phase 10: Paper Writing
+*Skip if `mode: research-only`.*
 - [ ] Venue requirements refreshed
 - [ ] All figures generated (paper/figures/)
 - [ ] Paper written (paper/main.tex)
@@ -359,4 +663,52 @@ Create the master todolist. See template below. Check off all Phase 0 items.
 
 ## Completion
 
-After all steps: commit with `init: project setup — [venue] / [topic]`, push, then notify-telegram. Pipeline proceeds to Phase 1 fully autonomously.
+After all steps: commit with `init: project setup — [venue] / [topic]` and push.
+
+**Initialize review_criteria.md stub** (prevents agent failures in Phase 7):
+```bash
+cat > references/review_criteria.md << 'EOF'
+# [Venue] [Year] Review Criteria
+
+**Status**: Placeholder — will be populated in Phase 7.1 by web search.
+
+Search query: "[venue] [year] review form reviewer guidelines"
+
+## Sections (to be filled in Phase 7.1):
+- Review dimensions (e.g., Technical quality, Novelty, Clarity, Significance)
+- Scoring scale (e.g., 1-10)
+- Mandatory checklists (e.g., reproducibility, code, ethics)
+- Known rejection patterns for this venue
+EOF
+git add references/review_criteria.md
+git commit -m "init: review criteria stub for [venue]"
+git push
+```
+
+### Phase 0 Verification (run after completing all steps above)
+```bash
+echo "=== Phase 0 Verification ===" && \
+  (wandb status 2>&1 | grep -qi "logged in" && echo "✓ wandb OK" || echo "✗ wandb NOT authenticated") && \
+  (pgrep -f "supervisor.py" > /dev/null && echo "✓ supervisor OK" || echo "✗ supervisor NOT running") && \
+  (pgrep -f "server.py" > /dev/null && echo "✓ result_shower OK" || echo "✗ result_shower NOT running") && \
+  (huggingface-cli whoami > /dev/null 2>&1 && echo "✓ HF Hub OK" || echo "✗ HF not authenticated") && \
+  (test -f progress/team_state.json && echo "✓ team_state.json exists" || echo "✗ team_state.json missing — create before Phase 1 dispatch")
+```
+All items must show ✓ before starting Phase 1.
+
+Notify-telegram: "Phase 0 complete. Project [name] initialized. Proceeding to Phase 1."
+
+**Update `progress/team_state.json` BEFORE sending the dispatch message** (required for crash recovery):
+```json
+{
+  "current_phase": 1,
+  "agents": {"ideation": {"status": "working"}},
+  "last_directive": "Begin Phase 1 — dispatched to ideation",
+  "last_updated": "<ISO timestamp>"
+}
+```
+
+**Send to Ideation Agent** to start Phase 1 (no further confirmation needed — this message IS the start signal):
+```
+SendMessage to "ideation": "Begin Phase 1. Project: [absolute path]. Config: config/config.md."
+```

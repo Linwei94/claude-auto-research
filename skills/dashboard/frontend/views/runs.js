@@ -63,11 +63,50 @@ export function renderRuns(container, state) {
     hdr.onclick = () => toggleRun(hdr, state.project);
   });
 
+  // Attach log viewer handlers
+  container.querySelectorAll('.run-log-link').forEach(link => {
+    link.onclick = async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const expId = link.dataset.log;
+      await showLogModal(expId, state.project);
+    };
+  });
+
   // Auto-expand running runs
   running.slice(0, 3).forEach(r => {
     const hdr = container.querySelector(`.run-header[data-id="${CSS.escape(r.exp_id)}"]`);
     if (hdr) toggleRun(hdr, state.project);
   });
+}
+
+async function showLogModal(expId, project) {
+  let content = 'Loading…';
+  try {
+    const res = await fetch(`/api/logfile/${encodeURIComponent(project)}/${encodeURIComponent(expId)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    content = data.found ? escHtml(data.content) : `<span style="color:var(--text-dim)">No log file found for ${escHtml(expId)}</span>`;
+  } catch (e) {
+    content = `<span style="color:var(--red)">Failed to load log: ${escHtml(e.message)}</span>`;
+  }
+
+  // Simple modal overlay
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  const modal = document.createElement('div');
+  modal.style.cssText = 'background:var(--surface);border:1px solid var(--border);border-radius:8px;width:min(90vw,800px);max-height:80vh;display:flex;flex-direction:column;overflow:hidden';
+  modal.innerHTML = `
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+      <span style="font-size:12px;font-weight:700;flex:1">Log: ${escHtml(expId)}</span>
+      <button onclick="this.closest('[style*=fixed]').remove()" style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:18px;line-height:1">×</button>
+    </div>
+    <pre style="flex:1;overflow:auto;padding:16px;margin:0;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all">${content}</pre>`;
+
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
 }
 
 function groupBlock(title, count, innerHtml, groupId, defaultOpen) {
@@ -116,6 +155,7 @@ function runCard(r) {
         ${host ? `<span class="run-meta">${escHtml(host)}</span>` : ''}
         ${metrics ? `<span class="run-metrics">${metrics}</span>` : ''}
         ${elapsed ? `<span class="run-meta">${elapsed}</span>` : ''}
+        <a class="run-log-link" href="#" data-log="${escAttr(r.exp_id)}" title="View log" style="color:var(--text-dim);font-size:11px;text-decoration:none;flex-shrink:0;padding:0 4px" onclick="event.stopPropagation()">📋</a>
         <span style="color:var(--text-dim);font-size:14px;flex-shrink:0">▸</span>
       </div>
       <div class="run-body" id="body-${escAttr(r.exp_id)}">${buildRunBody(r)}</div>
@@ -173,15 +213,17 @@ async function toggleRun(hdr, project) {
   if (!wrap) return;
 
   try {
-    const data = await fetch(`/api/steps/${encodeURIComponent(project)}/${encodeURIComponent(id)}`).then(r => r.json());
+    const res = await fetch(`/api/steps/${encodeURIComponent(project)}/${encodeURIComponent(id)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
     const steps = data.steps || [];
     if (!steps.length) {
       wrap.innerHTML = '<div class="text-muted" style="font-size:12px;padding:20px">No step data yet.</div>';
       return;
     }
     renderChart(wrap, id, steps);
-  } catch (_) {
-    wrap.innerHTML = '<div class="text-muted" style="font-size:12px;padding:20px">Could not load step data.</div>';
+  } catch (e) {
+    wrap.innerHTML = `<div class="text-muted" style="font-size:12px;padding:20px">Could not load step data${e.message ? ` (${escHtml(e.message)})` : ''}.</div>`;
   }
 }
 

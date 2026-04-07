@@ -15,7 +15,31 @@ export function renderOverview(container, state) {
   const recentDone = runs.filter(r => r.status === 'done').slice(0, 6);
   const runningRuns = runs.filter(r => r.status === 'running');
 
+  // Empty state: no experiments have been dispatched yet
+  if (runs.length === 0 && (s.total === 0 || s.total == null)) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">🧪</div>
+        <p>No experiments yet.</p>
+        <p style="color:var(--text-dim);font-size:12px">Dispatch experiments from the Lab Agent to see results here.</p>
+      </div>`;
+    return;
+  }
+
+  const keyFinding = research.meta?.key_finding || null;
+  const globalInsights = research.insights || [];
+
   container.innerHTML = `
+    <!-- Key finding banner (from dashboard/meta.json) -->
+    ${keyFinding ? `
+    <div style="background:rgba(99,202,183,0.08);border:1px solid rgba(99,202,183,0.3);border-radius:6px;padding:10px 14px;margin-bottom:12px">
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--green);font-weight:700;margin-bottom:3px">Key Finding</div>
+      <div style="font-size:13px;color:var(--text)">${escHtml(keyFinding)}</div>
+    </div>` : ''}
+
+    <!-- Global insights from meta.json -->
+    ${globalInsights.length ? globalInsights.map(ins => renderInsightCard(ins)).join('') : ''}
+
     <!-- Summary cards -->
     <div class="summary-grid">
       ${summaryCard(s.running, 'running', 'Running')}
@@ -39,6 +63,18 @@ export function renderOverview(container, state) {
       ${recentDone.length ? recentDone.map(r => renderRecentRun(r)).join('') : '<div class="text-muted" style="font-size:12px">No completed experiments yet.</div>'}
     </div>
   `;
+}
+
+function renderInsightCard(ins) {
+  const colors = { finding: 'var(--green)', milestone: 'var(--accent)', concern: 'var(--orange)', next_step: 'var(--text-dim)' };
+  const icons  = { finding: '●', milestone: '✓', concern: '⚠', next_step: '→' };
+  const color  = colors[ins.type] || 'var(--text-dim)';
+  const icon   = icons[ins.type]  || '●';
+  return `
+    <div style="border-left:3px solid ${color};padding:8px 12px;margin-bottom:8px;background:var(--surface)">
+      <div style="font-size:11px;font-weight:700;color:${color};margin-bottom:3px">${icon} ${escHtml(ins.title)}</div>
+      <div style="font-size:12px;color:var(--text)">${escHtml(ins.content)}</div>
+    </div>`;
 }
 
 function summaryCard(val, cls, label) {

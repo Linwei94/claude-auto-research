@@ -386,7 +386,12 @@ def _load_csv_table(project_dir: Path) -> list[dict]:
         return []
     try:
         with open(p, newline="") as f:
-            return list(csv.DictReader(f))
+            rows = list(csv.DictReader(f))
+        REQUIRED_CSV_COLS = {"exp_id", "method", "metric", "value"}
+        if rows and not REQUIRED_CSV_COLS.issubset(set(rows[0].keys())):
+            missing = REQUIRED_CSV_COLS - set(rows[0].keys())
+            logging.warning("all_results.csv missing required columns: %s. Dashboard may be empty.", missing)
+        return rows
     except Exception:
         return []
 
@@ -466,6 +471,216 @@ def _load_significance(project_dir: Path) -> list[dict]:
             return list(csv.DictReader(f))
     except Exception:
         return []
+
+
+def _load_dashboard_meta(project_dir: Path) -> dict:
+    """Load dashboard/meta.json — human-readable enrichment written by dashboard-update skill."""
+    p = project_dir / "dashboard" / "meta.json"
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return {}
+
+
+def _apply_meta_to_experiments(experiments: list[dict], meta: dict) -> list[dict]:
+    """
+    Merge dashboard/meta.json into the experiments list:
+    - Override table name and add caption
+    - Apply paper-friendly method labels and group overrides
+    - Attach insights
+    """
+    if not meta or not experiments:
+        return experiments
+
+    table_meta: dict[str, dict] = {t["id"]: t for t in meta.get("tables", []) if t.get("id")}
+
+    for exp in experiments:
+        tm = table_meta.get(exp["id"])
+        if not tm:
+            continue
+
+        # Override name and add caption
+        if tm.get("name"):
+            exp["name"] = tm["name"]
+        if tm.get("caption"):
+            exp["caption"] = tm["caption"]
+        if tm.get("insights"):
+            exp["insights"] = tm["insights"]
+        if tm.get("highlight_metric"):
+            exp["highlight_metric"] = tm["highlight_metric"]
+
+        # Apply method label/group overrides to table rows
+        method_meta: dict[str, dict] = tm.get("methods", {})
+        if method_meta and exp.get("table", {}).get("rows"):
+            for row in exp["table"]["rows"]:
+                m = row.get("method", "")
+                if m in method_meta:
+                    mm = method_meta[m]
+                    if mm.get("label"):
+                        row["label"] = mm["label"]
+                    if mm.get("group"):
+                        row["group"] = mm["group"]
+                    if mm.get("note"):
+                        row["note"] = mm["note"]
+
+    return experiments
+
+
+def _load_experiment_defs(project_dir: Path) -> list[dict]:
+    """Load experiment definitions from experiments/definitions.json (written by Pipeline Lead)."""
+    p = project_dir / "experiments" / "definitions.json"
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text())
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _decompose_embedded_methods(rows: list[dict]) -> tuple[list[dict], bool]:
+    """
+    When method='other' and metrics look like 'method_suffix' (e.g. 'source_only_avg_ece'),
+    try to split into proper (method, metric) pairs using shared-suffix detection.
+    Returns (new_rows, success).
+    """
+    if not rows:
+        return rows, False
+    if any(r.get("method", "other") not in ("other", "", "unknown") for r in rows):
+        return rows, False
+
+    metrics = [r["metric"] for r in rows]
+
+    # Find all possible (prefix, suffix) splits; count distinct prefixes per suffix
+    suffix_to_prefixes: dict[str, set] = {}
+    for m in metrics:
+        parts = m.split("_")
+        for i in range(1, len(parts)):
+            pfx = "_".join(parts[:i])
+            sfx = "_".join(parts[i:])
+            suffix_to_prefixes.setdefault(sfx, set()).add(pfx)
+
+    valid_suffixes = {s for s, ps in suffix_to_prefixes.items() if len(ps) >= 2}
+    if not valid_suffixes:
+        return rows, False
+
+    new_rows: list[dict] = []
+    for r in rows:
+        m = r["metric"]
+        parts = m.split("_")
+        best: tuple | None = None
+        best_len = 0
+        for i in range(1, len(parts)):
+            pfx = "_".join(parts[:i])
+            sfx = "_".join(parts[i:])
+            if sfx in valid_suffixes and len(sfx) > best_len:
+                best = (pfx, sfx)
+                best_len = len(sfx)
+        if best:
+            nr = dict(r)
+            nr["method"] = best[0]
+            nr["metric"]  = best[1]
+            new_rows.append(nr)
+
+    return (new_rows, True) if new_rows else (rows, False)
+
+
+def _build_metric_columns_table(rows: list[dict]) -> dict:
+    """
+    Build a table where COLUMNS = metrics, ROWS = methods.
+    Used for single-dataset experiment groups (typical paper table style).
+    Cell key format: 'method|metric_name'.
+    Layout tag 'metric_columns' tells the frontend to render accordingly.
+    """
+    cells_raw: dict[tuple, list] = {}   # (method, metric) → [values]
+    methods: dict[str, str] = {}        # method → group
+    metrics_order: list[str] = []
+
+    for row in rows:
+        m  = row.get("method", "unknown")
+        mn = row.get("metric", "")
+        g  = row.get("group", "other")
+        try:
+            v = float(row.get("value", ""))
+        except (ValueError, TypeError):
+            continue
+        methods[m] = g
+        if mn not in metrics_order:
+            metrics_order.append(mn)
+        cells_raw.setdefault((m, mn), []).append(v)
+
+    cells: dict[str, dict] = {}
+    for (mth, mn), vals in cells_raw.items():
+        mean = sum(vals) / len(vals)
+        std  = statistics.stdev(vals) if len(vals) > 1 else None
+        cells[f"{mth}|{mn}"] = {
+            "mean": mean, "std": std, "seed_count": len(vals),
+            "status": "done", "value": mean,
+        }
+
+    group_order = ["baseline", "main", "ablation", "analysis", "other"]
+    sorted_methods = sorted(
+        methods.items(),
+        key=lambda kv: (group_order.index(kv[1]) if kv[1] in group_order else 99, kv[0]),
+    )
+
+    # Pick primary metric: prefer ones containing 'ece' or 'acc'
+    primary = next(
+        (mn for mn in metrics_order if "ece" in mn.lower()),
+        next((mn for mn in metrics_order if "acc" in mn.lower()), metrics_order[0] if metrics_order else ""),
+    )
+
+    return {
+        "layout":         "metric_columns",
+        "primary_metric": primary,
+        "metrics":        metrics_order,
+        "rows":           [{"method": m, "group": g} for m, g in sorted_methods],
+        "cells":          cells,
+    }
+
+
+def _auto_group_tables(csv_rows: list[dict]) -> list[dict] | None:
+    """
+    Auto-group CSV rows by exp_id into separate tables (one per exp_id).
+    For each group, try to decompose embedded method names from metric strings.
+    Returns list of table dicts, or None if only one exp_id (use single-table path).
+    """
+    from itertools import groupby
+
+    # Group by exp_id
+    by_exp: dict[str, list] = {}
+    for r in csv_rows:
+        eid = r.get("exp_id", "")
+        by_exp.setdefault(eid, []).append(r)
+
+    if len(by_exp) <= 1:
+        return None   # only one group — single-table fallback is fine
+
+    tables = []
+    for eid, rows in by_exp.items():
+        # Try to decompose embedded methods
+        decomposed, ok = _decompose_embedded_methods(rows)
+        if ok:
+            # Check if single dataset → use metric-columns layout
+            datasets = {r.get("dataset", "") for r in decomposed}
+            if len(datasets) <= 1:
+                table = _build_metric_columns_table(decomposed)
+            else:
+                table = _build_table(decomposed)
+        else:
+            table = _build_table(rows)
+
+        tables.append({
+            "id":    eid,
+            "name":  eid.replace("_", " ").title(),
+            "table": table,
+        })
+
+    # Sort: pilot < phase5 < full < aasd (natural order by name)
+    tables.sort(key=lambda t: t["id"])
+    return tables
 
 
 def _build_table(csv_rows: list[dict]) -> dict:
@@ -559,24 +774,47 @@ def _get_research_data(project: str) -> dict | None:
                    if eid not in runs_by_id
                    and dispatch_map.get(eid, {}).get("status") == "pending"}
 
+    # Load sidecar files for wandb + HF URLs (dispatch/<EXP_ID>.status.json)
+    sidecar_wandb: dict[str, str] = {}
+    sidecar_hf:    dict[str, str] = {}
+    sidecar_dir = project_dir / "dispatch"
+    if sidecar_dir.exists():
+        for sf in sidecar_dir.glob("*.status.json"):
+            try:
+                sd = json.loads(sf.read_text())
+                eid_s = sd.get("exp_id") or sf.stem.removesuffix(".status")
+                wurl = sd.get("wandb_run_id", "") or sd.get("wandb_url", "")
+                hfurl = sd.get("hf_artifact_url", "")
+                if eid_s:
+                    if wurl:  sidecar_wandb[eid_s] = wurl
+                    if hfurl: sidecar_hf[eid_s]    = hfurl
+            except Exception:
+                pass
+
     run_list: list[dict] = []
     for eid, run in runs_by_id.items():
         d_exp = dispatch_map.get(eid, {})
+        wandb_url = (run.get("wandb_url", "")
+                     or d_exp.get("wandb_run_id", "")
+                     or d_exp.get("wandb_url", "")
+                     or sidecar_wandb.get(eid, ""))
+        hf_url = (run.get("hf_artifact_url", "")
+                  or d_exp.get("hf_artifact_url", "")
+                  or sidecar_hf.get(eid, ""))
         run_list.append({
-            "exp_id":      eid,
-            "status":      run.get("status", "unknown"),
-            "host":        run.get("host", ""),
-            "gpu":         run.get("gpu", ""),
-            "pid":         run.get("pid"),
-            "conda":       run.get("conda", ""),
-            "cuda":        run.get("cuda", ""),
-            "torch":       run.get("torch", ""),
-            "config":      run.get("config", {}),
-            "metrics":     run.get("metrics", {}),
-            "description": _get_exp_description(project_dir, eid, d_exp),
-            "started":     run.get("started", ""),
-            "finished":    run.get("timestamp", "") if run.get("status") == "done" else "",
-            "latest_step": run.get("step_logs", [{}])[-1] if run.get("step_logs") else {},
+            "exp_id":         eid,
+            "status":         run.get("status", "unknown"),
+            "host":           run.get("host", ""),
+            "gpu":            run.get("gpu", ""),
+            "pid":            run.get("pid"),
+            "config":         run.get("config", {}),
+            "metrics":        run.get("metrics", {}),
+            "wandb_url":      wandb_url,
+            "hf_artifact_url": hf_url,
+            "description":    _get_exp_description(project_dir, eid, d_exp),
+            "started":        run.get("started", ""),
+            "finished":       run.get("timestamp", "") if run.get("status") == "done" else "",
+            "latest_step":    run.get("step_logs", [{}])[-1] if run.get("step_logs") else {},
         })
 
     for eid in pending_ids:
@@ -585,6 +823,8 @@ def _get_research_data(project: str) -> dict | None:
             "exp_id": eid, "status": "pending",
             "host": "", "gpu": "", "pid": None,
             "config": {}, "metrics": {},
+            "wandb_url":       sidecar_wandb.get(eid, ""),
+            "hf_artifact_url": sidecar_hf.get(eid, ""),
             "description": _get_exp_description(project_dir, eid, d_exp),
             "started": "", "finished": "", "latest_step": {},
         })
@@ -597,18 +837,23 @@ def _get_research_data(project: str) -> dict | None:
             d_config = {k: v for k, v in exp.items()
                         if k not in _DISPATCH_META_KEYS and not isinstance(v, (dict, list))}
             d_metrics = exp.get("results", {}) or {}
+            wurl  = (exp.get("wandb_run_id", "") or exp.get("wandb_url", "")
+                     or sidecar_wandb.get(eid, ""))
+            hfurl = (exp.get("hf_artifact_url", "") or sidecar_hf.get(eid, ""))
             run_list.append({
-                "exp_id":      eid,
-                "status":      exp.get("status", "pending"),
-                "host":        exp.get("host") or "",
-                "gpu":         exp.get("gpu") or "",
-                "pid":         exp.get("pid"),
-                "config":      d_config,
-                "metrics":     d_metrics,
-                "description": _get_exp_description(project_dir, eid, exp),
-                "started":     exp.get("started") or "",
-                "finished":    "",
-                "latest_step": {},
+                "exp_id":          eid,
+                "status":          exp.get("status", "pending"),
+                "host":            exp.get("host") or "",
+                "gpu":             exp.get("gpu") or "",
+                "pid":             exp.get("pid"),
+                "config":          d_config,
+                "metrics":         d_metrics,
+                "wandb_url":       wurl,
+                "hf_artifact_url": hfurl,
+                "description":     _get_exp_description(project_dir, eid, exp),
+                "started":         exp.get("started") or "",
+                "finished":        "",
+                "latest_step":     {},
             })
 
     done    = [r for r in run_list if r["status"] == "done"]
@@ -629,29 +874,145 @@ def _get_research_data(project: str) -> dict | None:
         "offline_queue": offline_count,
     }
 
-    table = _build_table(csv_rows)
-    # Overlay running status into cells, rows, and datasets
-    # If no completed experiments yet, seed cells_by_metric with a placeholder metric
-    if not table["cells_by_metric"] and running:
-        table["cells_by_metric"][""] = {}
-        table["metrics"] = [""]
-        table["primary_metric"] = ""
-    existing_methods = {r["method"] for r in table["rows"]}
-    for run in running:
-        parsed = _parse_exp_id(run["exp_id"], run.get("config") or {})
-        m, d = parsed["method"], parsed["dataset"]
-        key = f"{m}|{d}"
-        for metric_cells in table["cells_by_metric"].values():
-            if key not in metric_cells:
-                metric_cells[key] = {"mean": None, "std": None, "seed_count": 0, "status": "running", "value": None}
-        if m not in existing_methods:
-            g = parsed["group"]
-            table["rows"].append({"method": m, "group": g, "label": _GROUP_LABEL.get(g, g)})
-            existing_methods.add(m)
-        if d not in table["datasets"]:
-            table["datasets"].append(d)
+    exp_defs   = _load_experiment_defs(project_dir)
+    dash_meta  = _load_dashboard_meta(project_dir)
 
-    return {"runs": run_list, "summary": summary, "table": table}
+    if exp_defs:
+        # ── Multi-experiment mode ──────────────────────────────────────────────
+        # Build a lookup: exp_id → experiment_id (from dispatch entries)
+        exp_id_to_def = {}
+        for d_exp in dispatch_exps:
+            eid = d_exp.get("id", "")
+            def_id = d_exp.get("experiment_id", "")
+            if eid and def_id:
+                exp_id_to_def[eid] = def_id
+
+        # Also match run_list entries that have experiment_id in config
+        for run in run_list:
+            eid = run.get("exp_id", "")
+            if eid not in exp_id_to_def:
+                cfg = run.get("config") or {}
+                def_id = cfg.get("experiment_id", "")
+                if def_id:
+                    exp_id_to_def[eid] = def_id
+
+        # Build per-experiment tables
+        experiments_out = []
+        for edef in exp_defs:
+            def_id = edef.get("id", "")
+            # Find dispatch entries belonging to this experiment
+            def_exp_ids = {eid for eid, did in exp_id_to_def.items() if did == def_id}
+            # Also match by prefix fallback if no explicit experiment_id mapping
+            if not def_exp_ids:
+                def_exp_ids = {eid for eid in {r["exp_id"] for r in run_list}
+                               if eid.startswith(def_id + "_") or eid == def_id}
+
+            # Filter csv_rows for this experiment
+            def_csv_rows = [r for r in csv_rows if r.get("exp_id", "") in def_exp_ids]
+            if not def_csv_rows:
+                # Try synthesizing from dispatch
+                def_dispatch = [e for e in dispatch_exps if e.get("id", "") in def_exp_ids]
+                def_csv_rows = _dispatch_to_csv_rows(def_dispatch)
+
+            def_running = [r for r in running if r["exp_id"] in def_exp_ids]
+
+            table = _build_table(def_csv_rows)
+            if not table["cells_by_metric"] and def_running:
+                table["cells_by_metric"][""] = {}
+                table["metrics"] = [""]
+                table["primary_metric"] = ""
+            existing_methods = {r["method"] for r in table["rows"]}
+            for run in def_running:
+                parsed = _parse_exp_id(run["exp_id"], run.get("config") or {})
+                m, d = parsed["method"], parsed["dataset"]
+                key = f"{m}|{d}"
+                for metric_cells in table["cells_by_metric"].values():
+                    if key not in metric_cells:
+                        metric_cells[key] = {"mean": None, "std": None, "seed_count": 0, "status": "running", "value": None}
+                if m not in existing_methods:
+                    g = parsed["group"]
+                    table["rows"].append({"method": m, "group": g, "label": _GROUP_LABEL.get(g, g)})
+                    existing_methods.add(m)
+                if d not in table["datasets"]:
+                    table["datasets"].append(d)
+
+            experiments_out.append({
+                "id":          def_id,
+                "name":        edef.get("name", def_id),
+                "description": edef.get("description", ""),
+                "phase":       edef.get("phase", ""),
+                "table":       table,
+                "running":     len(def_running),
+                "done":        len([r for r in done if r["exp_id"] in def_exp_ids]),
+            })
+
+        experiments_out = _apply_meta_to_experiments(experiments_out, dash_meta)
+        proj_meta = dash_meta.get("project", {})
+        return {
+            "runs": run_list, "summary": summary, "experiments": experiments_out,
+            "meta": proj_meta,
+            "insights": dash_meta.get("insights", []),
+        }
+
+    else:
+        # ── Auto-group fallback (no definitions.json) ──────────────────────────
+        auto_tables = _auto_group_tables(csv_rows) if csv_rows else None
+
+        if auto_tables:
+            # Multiple exp_id groups → return as experiments list
+            for tbl in auto_tables:
+                eid = tbl["id"]
+                tbl_running = [r for r in running if r["exp_id"] == eid
+                               or r["exp_id"].startswith(eid + "_")]
+                tbl["running"] = len(tbl_running)
+                tbl["done"]    = len([r for r in done if r["exp_id"] == eid
+                                      or r["exp_id"].startswith(eid + "_")])
+                tbl["description"] = ""
+                tbl["phase"] = ""
+            auto_tables = _apply_meta_to_experiments(auto_tables, dash_meta)
+            proj_meta = dash_meta.get("project", {})
+            return {
+                "runs": run_list, "summary": summary, "experiments": auto_tables,
+                "meta": proj_meta,
+                "insights": dash_meta.get("insights", []),
+            }
+
+        # ── True single-table fallback ─────────────────────────────────────────
+        # Try decomposition even for single exp_id
+        if csv_rows:
+            decomposed, ok = _decompose_embedded_methods(csv_rows)
+            if ok:
+                datasets = {r.get("dataset", "") for r in decomposed}
+                if len(datasets) <= 1:
+                    table = _build_metric_columns_table(decomposed)
+                else:
+                    table = _build_table(decomposed)
+            else:
+                table = _build_table(csv_rows)
+        else:
+            table = _build_table(csv_rows)
+
+        # Add running placeholders
+        if "cells_by_metric" not in table and running:
+            table["cells_by_metric"] = {"": {}}
+            table["metrics"] = [""]
+            table["primary_metric"] = ""
+        existing_methods = {r["method"] for r in table.get("rows", [])}
+        for run in running:
+            parsed = _parse_exp_id(run["exp_id"], run.get("config") or {})
+            m, d = parsed["method"], parsed["dataset"]
+            key = f"{m}|{d}"
+            for metric_cells in table.get("cells_by_metric", {}).values():
+                if key not in metric_cells:
+                    metric_cells[key] = {"mean": None, "std": None, "seed_count": 0,
+                                         "status": "running", "value": None}
+            if m not in existing_methods:
+                g = parsed["group"]
+                table.setdefault("rows", []).append({"method": m, "group": g})
+                existing_methods.add(m)
+            if "datasets" in table and d not in table["datasets"]:
+                table["datasets"].append(d)
+        return {"runs": run_list, "summary": summary, "table": table}
 
 
 # ── Path validation ───────────────────────────────────────────────────────────
@@ -664,7 +1025,7 @@ def _safe_name(raw: str) -> str | None:
 
 
 def _safe_subpath(raw: str) -> str | None:
-    if ".." in raw or raw.startswith("/"):
+    if ".." in raw or raw.startswith("/") or "\\" in raw or raw.startswith("."):
         return None
     return raw
 
@@ -701,6 +1062,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", len(data))
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(data)
 
@@ -742,6 +1104,8 @@ class Handler(BaseHTTPRequestHandler):
             name = _safe_name(path[len("/api/phase/"):])
             if name is None:
                 self.send_error(400); return
+            if not (HOME / name).is_dir():
+                self.send_error(404); return
             self.send_json(_parse_todo_md(HOME / name))
 
         # ── API: GPU status ───────────────────────────────────────
@@ -753,6 +1117,8 @@ class Handler(BaseHTTPRequestHandler):
             name = _safe_name(path[len("/api/significance/"):])
             if name is None:
                 self.send_error(400); return
+            if not (HOME / name).is_dir():
+                self.send_error(404); return
             self.send_json(_load_significance(HOME / name))
 
         # ── API: step logs for a run ──────────────────────────────
@@ -763,7 +1129,7 @@ class Handler(BaseHTTPRequestHandler):
             if name is None or len(parts) < 2:
                 self.send_error(400); return
             exp_id = parts[1].rstrip("/")
-            if ".." in exp_id or "/" in exp_id:
+            if ".." in exp_id or "/" in exp_id or "\\" in exp_id or exp_id.startswith("."):
                 self.send_error(400); return
             run_path = _runs_dir(HOME / name) / f"{exp_id}.json"
             if not run_path.is_file():
@@ -792,7 +1158,7 @@ class Handler(BaseHTTPRequestHandler):
             if name is None or len(parts) < 2:
                 self.send_error(400); return
             exp_id = parts[1].rstrip("/")
-            if ".." in exp_id or "/" in exp_id:
+            if ".." in exp_id or "/" in exp_id or "\\" in exp_id or exp_id.startswith("."):
                 self.send_error(400); return
             log_path = HOME / name / "experiments" / "logs" / f"{exp_id}.md"
             if not log_path.is_file():
@@ -815,6 +1181,8 @@ class Handler(BaseHTTPRequestHandler):
             name = _safe_name(path[len("/api/pdfs/"):])
             if name is None:
                 self.send_error(400); return
+            if not (HOME / name).is_dir():
+                self.send_error(404); return
             self.send_json(get_pdf_list(HOME / name))
 
         # ── Serve PDF ─────────────────────────────────────────────
@@ -856,7 +1224,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(400); return
             self._handle_sse(name)
 
+        # ── Project direct URL: /<project-name>[/] → frontend shell ─
         else:
+            # Strip trailing slash and check for single path segment
+            clean = path.rstrip("/")
+            if "/" not in clean[1:]:
+                name = _safe_name(clean[1:])
+                if name is not None:
+                    # Serve the frontend shell unconditionally; let JS handle "project not found"
+                    self.serve_file(FRONTEND_DIR / "index.html")
+                    return
             self.send_error(404)
 
     def _handle_sse(self, project: str):
@@ -870,8 +1247,16 @@ class Handler(BaseHTTPRequestHandler):
 
         q = _sse_subscribe(project)
         try:
-            # Initial handshake
-            self.wfile.write(b'data: {"type":"connected"}\n\n')
+            # Set retry hint (3 seconds) so browser reconnects quickly after server restart
+            self.wfile.write(b'retry: 3000\n')
+            # Initial handshake — also sends current phase so badge updates immediately on connect
+            try:
+                todo = _parse_todo_md(HOME / project)
+                current_phase = todo.get("current_phase")
+            except Exception:
+                current_phase = None
+            phase_data = json.dumps({"type": "connected", "phase": current_phase})
+            self.wfile.write(("data: " + phase_data + "\n\n").encode())
             self.wfile.flush()
 
             while True:
@@ -916,6 +1301,11 @@ class Handler(BaseHTTPRequestHandler):
         project = _safe_name(payload["project"])
         if project is None:
             self.send_json({"ok": False, "error": "invalid project name"}, status=400); return
+
+        # Validate exp_id to prevent path traversal (exp_id is used as filename in runs/)
+        exp_id_raw = payload.get("exp_id", "")
+        if not exp_id_raw or ".." in exp_id_raw or "/" in exp_id_raw or "\\" in exp_id_raw or exp_id_raw.startswith("."):
+            self.send_json({"ok": False, "error": "invalid exp_id"}, status=400); return
 
         project_dir = HOME / project
         try:
