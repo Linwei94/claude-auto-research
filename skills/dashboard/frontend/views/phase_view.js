@@ -46,8 +46,6 @@ export async function renderPhaseView(container, state, phaseGroup) {
   });
 }
 
-const _TRUNCATE_LIMIT = 10_000;
-
 function _renderMd(content) {
   if (typeof window.marked !== 'undefined') {
     try {
@@ -61,10 +59,6 @@ function _renderMd(content) {
 function _buildCard(file, expanded) {
   const arrow = expanded ? '▼' : '▶';
   const display = expanded ? 'block' : 'none';
-  const truncated = file.content && file.content.length >= _TRUNCATE_LIMIT;
-  const truncNotice = truncated
-    ? `<div style="padding:4px 16px;font-size:11px;color:var(--orange);border-top:1px solid var(--border)">(truncated — showing first 10,000 chars)</div>`
-    : '';
   return `
     <div class="card" style="padding:0;margin-bottom:12px;overflow:hidden">
       <div class="phase-card-header" style="display:flex;align-items:center;gap:8px;
@@ -75,7 +69,6 @@ function _buildCard(file, expanded) {
       </div>
       <div style="display:${display}">
         <div class="md-body">${_renderMd(file.content)}</div>
-        ${truncNotice}
       </div>
     </div>`;
 }

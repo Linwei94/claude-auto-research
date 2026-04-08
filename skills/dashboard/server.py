@@ -423,7 +423,7 @@ def _get_phase_files(project_dir: Path, phase_group: str) -> dict:
                 result.append({
                     "path": str(f.relative_to(project_dir)),
                     "name": f.name,
-                    "content": f.read_text(errors="replace")[:10_000],
+                    "content": f.read_text(errors="replace"),
                 })
             except Exception:
                 pass
