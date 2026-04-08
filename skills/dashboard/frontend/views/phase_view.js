@@ -48,6 +48,16 @@ export async function renderPhaseView(container, state, phaseGroup) {
 
 const _TRUNCATE_LIMIT = 10_000;
 
+function _renderMd(content) {
+  if (typeof window.marked !== 'undefined') {
+    try {
+      return window.marked.parse(content, { breaks: true, gfm: true });
+    } catch (_) {}
+  }
+  // Fallback: escaped plain text
+  return `<pre style="white-space:pre-wrap">${escHtml(content)}</pre>`;
+}
+
 function _buildCard(file, expanded) {
   const arrow = expanded ? '▼' : '▶';
   const display = expanded ? 'block' : 'none';
@@ -64,9 +74,7 @@ function _buildCard(file, expanded) {
         <span style="font-size:11px;color:var(--text-dim)">${escHtml(file.path)}</span>
       </div>
       <div style="display:${display}">
-        <pre style="margin:0;padding:14px 16px;font-size:12px;font-family:monospace;
-                    white-space:pre-wrap;overflow-x:auto;line-height:1.6;
-                    color:var(--text);background:var(--surface)">${escHtml(file.content)}</pre>
+        <div class="md-body">${_renderMd(file.content)}</div>
         ${truncNotice}
       </div>
     </div>`;
