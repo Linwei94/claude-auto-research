@@ -52,6 +52,26 @@ For large-scale pilots: use `--max-samples N` or `--subset-classes K` to run jus
 
 **Minimum requirement**: at least 1 small-scale pilot (full) + 1 large-scale pilot (subset). If both pass, the idea has demonstrated multi-scale viability.
 
+### Progressive Staging Rule
+
+Structure ALL pilots into 3 stages. **Dispatch Stage 1 only first** — later stages are gated on prior stage results. This prevents wasting GPU hours on a fundamentally broken idea.
+
+| Stage | Scale | Target compute | Dispatch rule | Purpose |
+|-------|-------|---------------|---------------|---------|
+| **Stage 1** | Minimal viable: 1–5% of data, or 1–5 epochs max | < 1 GPU-hour | Always dispatch first | Prove core mechanism activates at all — fail fast, waste nothing |
+| **Stage 2** | Small scale: full run on small dataset (CIFAR-10, STL-10, etc.) | 2–8 GPU-hours | Only after Stage 1 core mechanism pilot passes | Validate across full training dynamics |
+| **Stage 3** | Scale sanity: subset of large dataset (10–20% ImageNet/COCO) | 4–12 GPU-hours | Only after Stage 2 passes | Verify no obvious scale-specific failure |
+
+Add `"stage": 1 / 2 / 3` to every dispatch entry. Stage assignment rules:
+- Core mechanism pilot (mandatory, small dataset, ultra-short run) → Stage 1
+- Full small-scale pilots → Stage 2
+- Large-scale subset pilots → Stage 3
+- Ablations and optional pilots → same stage as their parent dimension pilot
+
+**Stage 1 failure → immediate user consultation**: If the Stage 1 core mechanism pilot fails AND no obvious one-line fix exists, do NOT silently proceed. Pause immediately and notify Pipeline Lead:
+> "Stage 1 (minimal viable test) of the core mechanism pilot failed. The fundamental approach may not work. Options: (A) diagnose and fix (enter Phase 5 iteration), (B) stop this idea and return to ideation."
+Pipeline Lead must surface this to the user (AskUserQuestion) before any further action.
+
 For each pilot, explicitly state: **"if this pilot fails, what does that tell us about the idea?"**
 
 **Baseline selection**: Read `plan/proposal.md` §4 (Experimental Plan) for the initial baseline list. 
@@ -227,7 +247,8 @@ Use **group + priority** to enable early stopping:
   "retry_count": 0, "max_retries": 2,
   "expected_duration_hours": 4.0,  // from Step 4.2c duration estimation
   "gadi_walltime_hours": null,
-  "duration_basis": null
+  "duration_basis": null,
+  "stage": 1                       // 1=minimal viable, 2=small-scale full, 3=large-scale subset
 }
 ```
 
@@ -235,7 +256,17 @@ Use **group + priority** to enable early stopping:
 
 Do NOT use custom group names (e.g. `"pilot_core_mechanism"`) — the early-stop check will silently skip them. All pilots testing the same hypothesis share a group value. Pilot 1 always gets `priority: 1`.
 
-Dispatch ALL pilots at once — supervisor picks them up by priority order as GPUs become available.
+**Stage-gated dispatch** — do NOT dispatch all pilots at once. Follow this sequence:
+
+1. **Dispatch Stage 1 only.** Wait for Stage 1 core mechanism pilot to complete.
+   - Stage 1 passes → dispatch Stage 2 pilots.
+   - Stage 1 fails → user consultation (see Phase 3 Progressive Staging Rule). Wait for user decision before dispatching anything else. If user says stop → rollback (§5.4). If user says continue → enter Phase 5 iteration on Stage 1 before dispatching Stage 2.
+2. **Dispatch Stage 2** (after Stage 1 pass). Wait for Stage 2 to complete.
+   - Stage 2 passes → dispatch Stage 3 pilots.
+   - Stage 2 fails → enter Phase 5 iteration. Do NOT dispatch Stage 3 until Stage 2 passes.
+3. **Dispatch Stage 3** (after Stage 2 pass). Monitor as normal.
+
+Supervisor picks up entries by priority within each stage. Never queue a higher stage while a lower stage is failing.
 
 **`experiments/definitions.json` schema** — Lab Agent writes this file alongside the dispatch entries. Dashboard and dashboard-update skill read it to display human-readable labels:
 ```json
@@ -439,6 +470,27 @@ Then wait for Pipeline Lead to initiate Mode B review. Do NOT proceed to Phase 6
 ## Phase 5: Method Iteration
 
 **Triggered when pilot fails with diagnosable cause.** Max 3 iterations total.
+
+### 5.0: User Consultation Gate
+
+Before starting any iteration and before any auto-rollback, explicitly surface the situation to the user. Pipeline Lead uses AskUserQuestion. **Never silently roll back while the user may want to give the idea another shot.**
+
+**After Stage 1 failure (core mechanism, any iteration):**
+Notify Pipeline Lead with this exact message:
+> "Stage 1 (minimal viable) core mechanism pilot failed. Improvement: [X]% vs baseline. Proposed fix: [one sentence]. Options: (A) attempt fix (iteration [N]), (B) stop this idea now."
+Wait for user decision. If (B): rollback (§5.4) immediately.
+
+**After iteration 1 fails (Stage 2+ result < early_stop_threshold):**
+Notify Pipeline Lead:
+> "Pilot iteration 1 failed to show meaningful improvement ([+X]% vs [threshold]% required). Proposed next fix: [one sentence]. Continue to iteration 2, or stop this idea?"
+Wait for user decision. If stop: rollback (§5.4).
+
+**After iteration 2 fails (< 1% improvement over vanilla baseline):**
+Notify Pipeline Lead:
+> "2 iterations have failed to clear the improvement threshold. Best so far: [+X]% vs baseline (need ≥1%). Continuing to iteration 3 is unlikely to change the outcome. Options: (A) attempt iteration 3 with [specific change], (B) stop this idea and return to ideation."
+Wait for user decision. If (B): rollback (§5.4). Do NOT auto-proceed to iteration 3 without explicit user approval.
+
+**Do NOT skip this gate** — the auto-rollback rule at iteration 2 in §5.1 only applies when the user has already been consulted and approved. If the user is unreachable (no response within 2 hours), default to stopping and writing a rollback summary, then notify via Telegram.
 
 ### 5.1: Diagnose
 

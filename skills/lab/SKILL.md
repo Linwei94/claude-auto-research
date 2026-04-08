@@ -319,7 +319,9 @@ If supervisor is active: **stop it first** (`systemctl stop experiment-superviso
 
 If you choose to let the supervisor handle dispatch (simpler): commit the dispatch table and skip spawning exec agents. Monitor via `dispatch/state.json` polling as described in Step 4.4.
 
-**For each pilot experiment, spawn one Execution Sub-agent** using the Agent tool with:
+**Stage-gated dispatch (mandatory)**: Dispatch pilot experiments in stages, not all at once. See `skills/pipeline/phases/pilot.md` Phase 3 "Progressive Staging Rule" and §4.3 "Stage-gated dispatch" for the full protocol: Stage 1 (minimal viable) first → wait for result → Stage 2 only if Stage 1 passes → Stage 3 only if Stage 2 passes. If any stage fails, enter user consultation before proceeding.
+
+**For each experiment in the current stage, spawn one Execution Sub-agent** using the Agent tool with:
 - `model: "haiku"` — mechanical execution only
 - `run_in_background: true`
 - Prompt: select the correct template based on the `host` field in the dispatch entry:
