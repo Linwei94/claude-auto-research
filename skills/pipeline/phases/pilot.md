@@ -91,10 +91,22 @@ Save to `plan/pilot_experiment_plan.md`. Format:
 
 ## Shared Baselines
 - Trivial: [no adaptation / source-only]
-- Strongest competing: [name, venue/year]
+- Strongest competing: [name, venue/year] ← primary reproduction target
 - Second: [name, venue/year]
 
 ## Pilots
+
+### Pilot 0: Strongest Baseline Reproduction (Stage 1 — Full Run on Small Dataset)
+- Purpose: establish a verified local reference for the strongest competing baseline BEFORE running our method
+- Baseline: [name, venue/year, paper URL]
+- Dataset: [1–2 small datasets matching the paper's evaluation protocol]
+- Paper reported results:
+  | Dataset | Metric | Paper value | Notes (checkpoint / split / augmentation) |
+  |---------|--------|-------------|-------------------------------------------|
+  | ...     | ...    | ...         | ...                                       |
+- Success criterion: our reproduced value within `min(2%, 20% × metric_range)` of paper value on primary metric
+- If fails: debug environment / data split / checkpoint loading BEFORE any other pilot. Do NOT proceed to Pilot 1 until this passes or a credible explanation for the gap is documented.
+- Compute: ~[N] GPU hours
 
 ### Pilot 1: Core Mechanism (Small Scale — Full)
 - Tests: [hypothesis]
@@ -129,13 +141,44 @@ Proceed to Phase 4 immediately.
 
 Minimum viable version only — no bells and whistles.
 
-### 4.2: Reproduce Key Baselines
+### 4.2: Reproduce Strongest Baseline (Mandatory First Pilot)
 
-Reproduce reported numbers for 2–3 baselines on ≥1 dataset before comparing anything. Log to `experiments/results/baseline_reproduction.md`.
+**The very first pilot dispatched (Pilot 0) is always a full reproduction of the strongest competing baseline.** Run it completely — not a sanity-check subset. This is Stage 1 of the staged dispatch.
 
-**Acceptable variance**: within `min(2%, 20% × metric_range)` where `metric_range = max_reported - min_reported` across all methods on that dataset. For a task where SOTA is 95.2% and the range across methods is 5%, the acceptable gap is `min(2%, 1%) = 1%`. For a task where accuracy ranges 50–90%, the acceptable gap is `min(2%, 8%) = 2%`. This prevents over-triggering on high-variance tasks and under-triggering on tight ones.
+**Why**: without a verified local baseline number, any claim of improvement is unanchored. The reproduced value becomes the denominator for all "Δ" comparisons in `pilot_synthesis.md` and Phase 9 analysis.
 
-**Baseline reproduction gate**: If gap exceeds the above threshold on primary metric: STOP pilot execution. Escalate to Pipeline Lead: "Baseline reproduction failed (gap: X%, threshold: Y%). Investigate before continuing." Do NOT dispatch pilot experiments until baselines reproduce.
+**What to run**: use the exact checkpoint, dataset split, preprocessing, and evaluation protocol from the paper. Reproduce on 1–2 small datasets (from the paper's evaluation table). If the paper uses a pre-trained checkpoint, download it; do NOT train from scratch unless the paper explicitly trains from scratch.
+
+**Output** — write `experiments/results/baseline_reproduction.md` with a side-by-side comparison table:
+
+```markdown
+# Baseline Reproduction Report
+
+## Strongest Baseline: [Method Name] ([Venue Year])
+Paper: [title + URL or arXiv ID]
+Checkpoint: [source URL or HF model ID]
+
+| Dataset | Metric | Paper reported | Our reproduced | Gap | Pass? |
+|---------|--------|---------------|----------------|-----|-------|
+| CIFAR-10-C | Acc | 91.3% | 91.1% | -0.2% | ✅ |
+| ImageNet-C | Acc | 67.8% | 67.2% | -0.6% | ✅ |
+
+**Acceptable gap threshold**: `min(2%, 20% × metric_range)` per dataset
+(metric_range = max_reported − min_reported across all methods on that dataset)
+
+## Environment Notes
+- Checkpoint: [where downloaded from]
+- Data split: [exact split used]
+- Key preprocessing differences vs. paper (if any): [...]
+- Seed used: [N]
+
+## Verdict: PASS / FAIL
+[If FAIL: root cause and whether it can be explained (e.g., different eval protocol)]
+```
+
+**Acceptable variance**: `min(2%, 20% × metric_range)`. For a task where SOTA is 95.2% and range is 5%, threshold = min(2%, 1%) = 1%. For accuracy 50–90% range, threshold = min(2%, 8%) = 2%.
+
+**Baseline reproduction gate**: If gap exceeds threshold on primary metric AND has no documented explanation: STOP. Escalate to Pipeline Lead: "Baseline reproduction failed (gap: X%, threshold: Y%). Investigate before continuing." Do NOT dispatch Pilot 1 or later until Pilot 0 passes or the gap is explained and accepted.
 
 #### Step 4.2b: Environment Setup
 
@@ -248,7 +291,8 @@ Use **group + priority** to enable early stopping:
   "expected_duration_hours": 4.0,  // from Step 4.2c duration estimation
   "gadi_walltime_hours": null,
   "duration_basis": null,
-  "stage": 1                       // 1=minimal viable, 2=small-scale full, 3=large-scale subset
+  "stage": 1,                      // 1=baseline repro / minimal viable, 2=small-scale full, 3=large-scale subset
+  "paper_reported": null           // for baseline pilots: {"CIFAR-10-C": {"acc": 91.3}, ...} — filled from paper
 }
 ```
 
