@@ -27,43 +27,39 @@ Do **NOT** use SendMessage.
 
 ---
 
-## SCO CLI Installation / Recovery
+## SCO CLI — Critical Path Notes
 
 > Full SCO CLI reference (all commands, flags, troubleshooting): `skills/lab/docs/sco-cli.md`
 
-If `sco` crashes or is missing on `finn_cci_c500`, reinstall it before proceeding:
+⚠️ **`/usr/local/bin/sco` is broken on `finn_cci_c500`.** Always use the full path `/root/.sco/bin/sco` in every SSH command. Never rely on `sco` resolving from PATH — the system binary is corrupt.
 
 ```bash
-# Install or reinstall sco CLI on finn_cci_c500
-ssh finn_cci_c500 "curl -sSfL https://sco.sensecore.cn/registry/sco/install.sh | sh && echo 'export PATH=~/.sco/bin:\$PATH' >> ~/.bashrc"
+# Correct — always use full path:
+ssh finn_cci_c500 "/root/.sco/bin/sco acp jobs list ..."
 
-# Verify
-ssh finn_cci_c500 "~/.sco/bin/sco version"
+# Wrong — /usr/local/bin/sco is broken:
+ssh finn_cci_c500 "sco acp jobs list ..."
 ```
 
-After install, make sure `sco` is on PATH in non-interactive SSH sessions (the `.bashrc` export above may not apply):
-
+**Install or reinstall** if `/root/.sco/bin/sco` is missing:
 ```bash
-# Always use full path in SSH commands, or prepend PATH inline:
-ssh finn_cci_c500 "PATH=~/.sco/bin:\$PATH sco acp jobs list ..."
+ssh finn_cci_c500 "curl -sSfL https://sco.sensecore.cn/registry/sco/install.sh | sh"
+ssh finn_cci_c500 "/root/.sco/bin/sco version"
 ```
 
 **Install all components** (needed for `sco acp` subcommands):
-
 ```bash
-ssh finn_cci_c500 "~/.sco/bin/sco components install all"
+ssh finn_cci_c500 "/root/.sco/bin/sco components install all"
 ```
 
-**Re-initialise** if credentials are lost (prompts for AccessKey ID + Secret + zone):
-
+**Re-initialise** if credentials are lost:
 ```bash
-ssh finn_cci_c500 "~/.sco/bin/sco init"
+ssh finn_cci_c500 "/root/.sco/bin/sco init"
 ```
 
 **Upgrade** if commands fail with version mismatch errors:
-
 ```bash
-ssh finn_cci_c500 "~/.sco/bin/sco components upgrade"
+ssh finn_cci_c500 "/root/.sco/bin/sco components upgrade"
 ```
 
 > After any install/upgrade, re-run the failing command — no server restart needed.
@@ -126,36 +122,41 @@ If the script uses `tracker.init(...)`, the Lab Agent should have already added 
 
 **Validate Docker image exists before submitting:**
 ```bash
-ssh finn_cci_c500 "sco acp images list --workspace-name aceworld-base 2>/dev/null | grep '<DOCKER_IMAGE>'" || {
+ssh finn_cci_c500 "/root/.sco/bin/sco acp images list --workspace-name aceworld-base 2>/dev/null | grep '<DOCKER_IMAGE>'" || {
   echo "ERROR: Docker image <DOCKER_IMAGE> not found in workspace. Check image name."
   # Write progress/escalate_<EXP_ID>.md and update dispatch/<EXP_ID>.status.json: status=failed
   exit 1
 }
 ```
 
-# Security note: WANDB_API_KEY is passed via --env flag (appears in process list).
-# Preferred alternative: configure wandb on the C500 container via `wandb login` beforehand,
-# or use --env-file to pass secrets (if supported by sco acp).
-# Ensure progress/lab.log is in .gitignore to prevent token exposure in git history.
+**Complete job submission command** (all required flags):
 ```bash
-ssh finn_cci_c500 "sco acp jobs create \
+# Security note: WANDB_API_KEY passed via --env appears in process list.
+# Preferred: pre-configure wandb inside container with `wandb login`.
+ssh finn_cci_c500 "/root/.sco/bin/sco acp jobs create \
   --workspace-name aceworld-base \
   --name <EXP_ID> \
   --image <DOCKER_IMAGE> \
+  -f pt \
   --resource-type metax_gpu \
   --resource MetaX.vGPU=1 \
   --replicas 1 \
   --env WANDB_API_KEY=<WANDB_API_KEY> \
   --env CUDA_VISIBLE_DEVICES=<GPU> \
   --env PYTHONPATH=<AFS_BASE>/<PROJECT> \
+  --env HF_HOME=<AFS_BASE>/hf_cache \
   -- <COMMAND>"
 ```
+
+Key flags:
+- `-f pt` — framework = PyTorch (required, otherwise container may not initialize correctly)
+- `HF_HOME=<AFS_BASE>/hf_cache` — points HuggingFace cache to AFS so models persist between container runs and don't need re-download
 
 Capture the job ID from output. Use stricter extraction:
 ```bash
 JOB_ID=$(echo "$CREATE_OUTPUT" | grep -oE 'job_id[: ]+[0-9a-f-]{8,}' | awk '{print $NF}')
 # Fallback if CLI outputs JSON:
-# JOB_ID=$(echo "$CREATE_OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin)['job_id'])")
+# JOB_ID=$(echo "$CREATE_OUTPUT" | python3 -c "import json,sys; print(json.load(sys.stdin)['job_id'])" 2>/dev/null)
 ```
 
 Update `dispatch/<EXP_ID>.status.json`: read sidecar, set `job_id`, write back.
@@ -166,23 +167,21 @@ echo "[$(date +%H:%M:%S)] [<EXP_ID>] started on C500 job_id=<JOB_ID>" >> progres
 ```
 
 **If job creation fails (non-zero exit or no job ID returned):** retry up to 3 attempts total with 30-second waits between attempts:
-# Security note: WANDB_API_KEY is passed via --env flag (appears in process list).
-# Preferred alternative: configure wandb on the C500 container via `wandb login` beforehand,
-# or use --env-file to pass secrets (if supported by sco acp).
-# Ensure progress/lab.log is in .gitignore to prevent token exposure in git history.
 ```bash
 # Attempt loop — max 3 tries
 for ATTEMPT in 1 2 3; do
-    JOB_OUTPUT=$(ssh finn_cci_c500 "sco acp jobs create \
+    JOB_OUTPUT=$(ssh finn_cci_c500 "/root/.sco/bin/sco acp jobs create \
       --workspace-name aceworld-base \
       --name <EXP_ID> \
       --image <DOCKER_IMAGE> \
+      -f pt \
       --resource-type metax_gpu \
       --resource MetaX.vGPU=1 \
       --replicas 1 \
       --env WANDB_API_KEY=<WANDB_API_KEY> \
       --env CUDA_VISIBLE_DEVICES=<GPU> \
       --env PYTHONPATH=<AFS_BASE>/<PROJECT> \
+      --env HF_HOME=<AFS_BASE>/hf_cache \
       -- <COMMAND> 2>&1")
     JOB_EXIT=$?
     # Extract job ID with stricter pattern
