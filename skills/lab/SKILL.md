@@ -86,13 +86,17 @@ Pipeline Lead does NOT write the pilot plan — Lab Agent owns Phase 3 design ex
 
 **Phase 3 Completion (mandatory)**
 After designing the pilot experiment plan:
-1. Write `experiments/scripts/` (pilot scripts) and `plan/pilot_experiment_plan.md`
-2. git add + git commit "Phase 3: pilot experiment design complete"
-3. SendMessage to Pipeline Lead:
+1. Write `plan/pilot_experiment_plan.md` and `experiments/definitions.json`.
+2. **Write `experiments/pilot_design.json` (empty table — all cells `status:"todo"`).**
+   This file must be written NOW (not in Phase 4) so the dashboard shows the experiment design table during user review.
+   Use the format from Step 4.2 below. Set `"phase": "pilot"`. Leave `host`, `gpu`, and `started` fields absent or null — they will be filled by exec agents later.
+   Commit this file immediately so the dashboard can serve it.
+3. git add + git commit "Phase 3: pilot experiment design complete"
+4. SendMessage to Pipeline Lead:
    "Phase 3 complete. Pilot plan ready at plan/pilot_experiment_plan.md.
-   Experiments: N pilots, M machines, estimated duration X hours.
+   Experiments: N pilots across M dimensions. Empty design table written to experiments/pilot_design.json (visible on dashboard).
    Awaiting user approval before Phase 4 dispatch."
-4. **WAIT** for Pipeline Lead's "User approved Phase 3 plan. Begin Phase 4." message.
+5. **WAIT** for Pipeline Lead's "User approved Phase 3 plan. Begin Phase 4." message.
    Do NOT start Phase 4 until this approval message is received.
 
 ---
@@ -230,7 +234,7 @@ Create a dispatch table:
 exp_id | host | gpu | command | estimated_vram_mb
 ```
 
-**Write dashboard design table (mandatory):** After finalising the dispatch table, write `experiments/pilot_design.json` so the dashboard shows the experiment plan immediately. Format:
+**Update dashboard design table (mandatory):** `experiments/pilot_design.json` was written in Phase 3 with empty cells. Now update it in place with the finalised dispatch info: fill in the `exp_id` for each cell (must exactly match the dispatch entry `id`), confirm row/col structure matches the dispatch table. Do NOT overwrite `status` fields — those start as `"todo"` and are updated by exec agents at runtime. Format:
 ```json
 {
   "title": "<human title, e.g. 'Pilot: TTA on CIFAR'>",
@@ -584,7 +588,7 @@ For each experiment × seed combination:
 
 **One entry per seed** (e.g., exp1_cifar10c_main_s0, _s1, _s2).
 
-**Write dashboard design table (mandatory):** After finalizing the Phase 8 dispatch table, write `experiments/full_design.json` so the dashboard shows the full experiment plan. Same format as `pilot_design.json` (see Step 4.2) but with `"phase": "full"`. Deduplicate across seeds: if multiple seeds share the same (method, dataset) cell, pick one representative `exp_id` per cell (or aggregate — dashboard shows the first matching dispatch entry). Commit alongside the dispatch table.
+**Update dashboard design table (mandatory):** `experiments/full_design.json` was written in Phase 6 with empty cells (`status:"todo"`). Now update it in place: fill in the `exp_id` for each cell (must exactly match the dispatch entry `id`), confirm the row/col structure matches the Phase 8 dispatch table. Deduplicate across seeds: if multiple seeds share the same (method, dataset) cell, pick one representative `exp_id` per cell (or aggregate — dashboard shows the first matching dispatch entry). Do NOT overwrite `status` fields — exec agents update those at runtime. Same format as `pilot_design.json` (see Step 4.2) but with `"phase": "full"`. Commit alongside the dispatch table.
 
 Create `dispatch/` directory and initialize per-experiment sidecar files (one per entry):
 ```bash

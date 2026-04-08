@@ -85,10 +85,13 @@ Re-check GPU availability: `gnvitop --agent`. Mark lower-priority experiments op
 
 Commit + notify-telegram.
 
-**Phase 6 completion** — send to Pipeline Lead via SendMessage:
+**Phase 6 completion** — before sending to Pipeline Lead:
+1. Write `experiments/full_design.json` (empty table — all cells `status:"todo"`) using the same format as `pilot_design.json` (see `skills/lab/SKILL.md` Step 4.2), with `"phase": "full"`. Commit immediately so the dashboard can serve it.
+2. Send to Pipeline Lead via SendMessage:
 ```
 Phase 6 complete. Experiment plan ready at plan/experiment_plan.md. [N] experiments, ~[X] GPU-hours.
 Summary: [key design decisions, e.g. '3 seeds × 5 datasets × 3 baselines = 45 experiments']
+Empty design table written to experiments/full_design.json (visible on dashboard Experiments tab).
 Ready for Phase 7 (experiment design debate).
 ```
 
