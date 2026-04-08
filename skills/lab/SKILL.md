@@ -230,6 +230,19 @@ Create a dispatch table:
 exp_id | host | gpu | command | estimated_vram_mb
 ```
 
+**Write dashboard design table (mandatory):** After finalising the dispatch table, write `experiments/pilot_design.json` so the dashboard shows the experiment plan immediately. Format:
+```json
+{
+  "title": "<human title, e.g. 'Pilot: TTA on CIFAR'>",
+  "description": "<one-line description of what this batch tests>",
+  "phase": "pilot",
+  "rows": [{"id": "<method_id>", "label": "<display name>", "group": "baseline|ours|ablation", "note": "<optional purpose>"}],
+  "cols": [{"id": "<dataset_id>", "label": "<display name>", "metric": "<primary metric name>"}],
+  "cells": [{"exp_id": "<matches dispatch entry id>", "row": "<method_id>", "col": "<dataset_id>", "purpose": "<why this experiment>"}]
+}
+```
+Each cell's `exp_id` must exactly match the dispatch entry `id`. Status is filled automatically by the dashboard from `dispatch/state.json`. Commit this file alongside the dispatch table.
+
 ### Step 4.2c: Estimate Duration Per Experiment
 
 Used for Gadi PBS `walltime`, exec agent timeouts, and detecting hung experiments.
@@ -568,6 +581,8 @@ For each experiment × seed combination:
 3. Assign to machine based on `gnvitop --agent` output
 
 **One entry per seed** (e.g., exp1_cifar10c_main_s0, _s1, _s2).
+
+**Write dashboard design table (mandatory):** After finalizing the Phase 8 dispatch table, write `experiments/full_design.json` so the dashboard shows the full experiment plan. Same format as `pilot_design.json` (see Step 4.2) but with `"phase": "full"`. Deduplicate across seeds: if multiple seeds share the same (method, dataset) cell, pick one representative `exp_id` per cell (or aggregate — dashboard shows the first matching dispatch entry). Commit alongside the dispatch table.
 
 Create `dispatch/` directory and initialize per-experiment sidecar files (one per entry):
 ```bash

@@ -399,6 +399,151 @@ def _load_csv_table(project_dir: Path) -> list[dict]:
 _SEED_RE = re.compile(r'_s\d+(_r\d+)?$')
 _PHASE_PREFIX_RE = re.compile(r'^(pilot\d*|exp\d*|full\d*|run\d*)_', re.I)
 
+# ── Experiment design table ───────────────────────────────────────────────────
+
+_PHASE_FILE_MAP: dict[str, list[str]] = {
+    "setup":       ["config/config.md", "plan/TODO.md"],
+    "ideation":    ["plan/proposal.md", "plan/ideas.md"],
+    "pilot":       ["plan/pilot_seed.md", "progress/pilot_verdict.md"],
+    "experiments": ["plan/proposal.md"],
+    "analysis":    ["progress/analysis.md", "progress/insights.md"],
+    "writing":     ["plan/outline.md"],
+    "rebuttal":    ["progress/rebuttal.md"],
+}
+
+
+def _get_phase_files(project_dir: Path, phase_group: str) -> dict:
+    """Return markdown files relevant to a phase group."""
+    result: list[dict] = []
+
+    # Lit search files for ideation (glob progress/lit_r*.md)
+    if phase_group == "ideation":
+        for f in sorted((project_dir / "progress").glob("lit_r*.md")):
+            try:
+                result.append({
+                    "path": str(f.relative_to(project_dir)),
+                    "name": f.name,
+                    "content": f.read_text(errors="replace")[:10_000],
+                })
+            except Exception:
+                pass
+
+    for rel in _PHASE_FILE_MAP.get(phase_group, []):
+        p = project_dir / rel
+        if p.is_file():
+            try:
+                result.append({
+                    "path": rel,
+                    "name": Path(rel).name,
+                    "content": p.read_text(errors="replace")[:10_000],
+                })
+            except Exception:
+                pass
+
+    return {"files": result, "phase": phase_group}
+
+
+def _get_exp_table(project_dir: Path, table_type: str) -> dict:
+    """Load experiment design table merged with dispatch state."""
+    # Build lookup from dispatch state
+    dispatch_map: dict[str, dict] = {}
+    for exp in _load_dispatch(project_dir):
+        eid = exp.get("id") or exp.get("exp_id")
+        if eid:
+            dispatch_map[eid] = exp
+
+    design_path = project_dir / "experiments" / f"{table_type}_design.json"
+
+    if design_path.is_file():
+        try:
+            design: dict = json.loads(design_path.read_text())
+        except Exception:
+            design = {}
+        # Merge dispatch status/results into each cell
+        for cell in design.get("cells", []):
+            exp_id = cell.get("exp_id")
+            if exp_id and exp_id in dispatch_map:
+                d = dispatch_map[exp_id]
+                # Only overwrite status from dispatch if dispatch actually has one
+                if d.get("status"):
+                    cell["status"] = d["status"]
+                elif "status" not in cell:
+                    cell["status"] = "todo"
+                results = d.get("results") or d.get("metrics") or {}
+                if results:  # only overwrite if dispatch has actual results
+                    cell["results"] = results
+                if d.get("wandb_url"):
+                    cell["wandb_url"] = d["wandb_url"]
+                if d.get("host"):
+                    cell["host"] = d["host"]
+                if d.get("started"):
+                    cell["started"] = d["started"]
+            elif "status" not in cell:
+                cell["status"] = "todo"
+        design["found"] = True
+    else:
+        # Auto-build from dispatch state if no design file
+        design = _auto_build_table(dispatch_map, table_type)
+        design["found"] = False
+
+    design["type"] = table_type
+    return design
+
+
+def _auto_build_table(dispatch_map: dict, table_type: str) -> dict:
+    """Auto-generate a design table from dispatch state when no design file exists."""
+    rows_seen: dict[str, dict] = {}
+    cols_seen: dict[str, dict] = {}
+    cells: list[dict] = []
+
+    for eid, exp in dispatch_map.items():
+        phase = (exp.get("phase") or "").lower()
+        # Filter by table type
+        is_pilot = "pilot" in eid.lower() or "pilot" in phase
+        if table_type == "pilot" and not is_pilot:
+            continue
+        if table_type == "full" and is_pilot:
+            continue
+
+        config = exp.get("config") or {}
+        method  = config.get("method") or ""
+        dataset = config.get("dataset") or ""
+        if not method:
+            m = _PHASE_PREFIX_RE.match(eid)
+            rest = eid[m.end():] if m else eid
+            method = _SEED_RE.sub("", rest) or rest
+        if not dataset:
+            _pm = _PHASE_PREFIX_RE.match(eid)
+            dataset = exp.get("dataset") or (_pm.group(1) if _pm else eid) or eid
+
+        if method not in rows_seen:
+            rows_seen[method] = {
+                "id": method, "label": method,
+                "group": exp.get("group") or config.get("group") or "other",
+            }
+        if dataset not in cols_seen:
+            cols_seen[dataset] = {"id": dataset, "label": dataset, "metric": ""}
+
+        results = exp.get("results") or exp.get("metrics") or {}
+        cells.append({
+            "exp_id":    eid,
+            "row":       method,
+            "col":       dataset,
+            "status":    exp.get("status", "todo"),
+            "results":   results,
+            "wandb_url": exp.get("wandb_url", ""),
+            "host":      exp.get("host", ""),
+            "started":   exp.get("started", ""),
+        })
+
+    return {
+        "title":       ("Pilot" if table_type == "pilot" else "Full") + " Experiments",
+        "description": "Auto-generated from dispatch/state.json" if cells else "",
+        "rows":        list(rows_seen.values()),
+        "cols":        list(cols_seen.values()),
+        "cells":       cells,
+    }
+
 # Fields that are internal dispatch metadata — excluded from the "config" view
 _DISPATCH_META_KEYS = {
     'id', 'status', 'results', 'description', 'notes',
@@ -1203,6 +1348,34 @@ class Handler(BaseHTTPRequestHandler):
             if pdf_path is None or not pdf_path.is_file():
                 self.send_error(404); return
             self.serve_bytes(pdf_path.read_bytes(), "application/pdf")
+
+        # ── API: experiment design table ──────────────────────────
+        elif path.startswith("/api/exp-table/"):
+            rest  = path[len("/api/exp-table/"):]
+            parts = rest.split("/", 1)
+            name  = _safe_name(parts[0]) if parts else None
+            if name is None:
+                self.send_error(400); return
+            table_type = parts[1].rstrip("/") if len(parts) > 1 else "pilot"
+            if table_type not in ("pilot", "full"):
+                self.send_error(400); return
+            proj_dir = HOME / name
+            if not proj_dir.is_dir():
+                self.send_json({"found": False, "type": table_type, "rows": [], "cols": [], "cells": []}); return
+            self.send_json(_get_exp_table(proj_dir, table_type))
+
+        # ── API: phase markdown files ──────────────────────────────
+        elif path.startswith("/api/phase-files/"):
+            rest  = path[len("/api/phase-files/"):]
+            parts = rest.split("/", 1)
+            name  = _safe_name(parts[0]) if parts else None
+            if name is None:
+                self.send_error(400); return
+            phase_group = parts[1].rstrip("/") if len(parts) > 1 else ""
+            proj_dir = HOME / name
+            if not proj_dir.is_dir():
+                self.send_json({"files": [], "phase": phase_group}); return
+            self.send_json(_get_phase_files(proj_dir, phase_group))
 
         # ── API: dispatch (legacy) ────────────────────────────────
         elif path == "/api/dispatch":

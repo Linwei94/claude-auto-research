@@ -416,6 +416,14 @@
     .cell-running { color: var(--blue); animation: pulse 1.5s ease-in-out infinite; }
     @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
 
+    /* ── Experiment design table cell states ──────────── */
+    .exp-design-table td { cursor: pointer; transition: background 0.12s; }
+    .exp-design-table td:hover { background: rgba(255,255,255,0.05); }
+    .cell-todo { color: var(--border); font-size: 15px; }
+    .cell-pending { font-size: 15px; }
+    .cell-running-exp { color: var(--blue); animation: pulse 1.2s ease-in-out infinite; font-size: 15px; }
+    .cell-failed-exp { color: var(--red); font-weight: 700; }
+
     /* ── GPU view ────────────────────────────────────── */
     .gpu-host { margin-bottom: 14px; }
     .gpu-host-name {
@@ -815,12 +823,15 @@
       <div id="phase-group-list" style="height:140px;overflow-y:auto"></div>
       <div class="sb-resize" id="sb-resize-2"></div>
     </div>
-    <!-- Per-project tabs -->
+    <!-- Per-project phase tabs (populated by app.js PHASE_GROUPS) -->
     <nav id="nav" style="border-top:1px solid var(--border);padding-top:4px">
-      <a class="nav-link" data-view="overview" id="nav-plan-link"><span class="nav-icon">📋</span>Plan</a>
-      <a class="nav-link" data-view="runs" id="nav-runs-link"><span class="nav-icon">🔬</span>Pilot Exp</a>
-      <a class="nav-link" data-view="results" id="nav-results-link"><span class="nav-icon">⚗</span>Full Exp</a>
-      <a class="nav-link" data-view="paper" id="nav-paper-link"><span class="nav-icon">📄</span>Paper</a>
+      <a class="nav-link" data-view="phase-setup"><span class="nav-icon">⚙</span>Setup</a>
+      <a class="nav-link" data-view="phase-ideation"><span class="nav-icon">💡</span>Ideation</a>
+      <a class="nav-link" data-view="phase-pilot"><span class="nav-icon">🔬</span>Pilot</a>
+      <a class="nav-link" data-view="phase-experiments"><span class="nav-icon">⚗</span>Experiments</a>
+      <a class="nav-link" data-view="phase-analysis"><span class="nav-icon">📊</span>Analysis</a>
+      <a class="nav-link" data-view="phase-writing"><span class="nav-icon">✍</span>Writing</a>
+      <a class="nav-link" data-view="phase-rebuttal"><span class="nav-icon">📬</span>Rebuttal</a>
     </nav>
     <div id="sidebar-stats" style="display:none">
       <div class="stat-chip"><span class="stat-val running" id="stat-running">0</span><span class="stat-lbl">Running</span></div>
