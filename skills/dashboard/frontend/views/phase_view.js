@@ -47,13 +47,42 @@ export async function renderPhaseView(container, state, phaseGroup) {
 }
 
 function _renderMd(content) {
-  if (typeof window.marked !== 'undefined') {
-    try {
-      return window.marked.parse(content, { breaks: true, gfm: true });
-    } catch (_) {}
+  if (typeof window.marked === 'undefined') {
+    return `<pre style="white-space:pre-wrap">${escHtml(content)}</pre>`;
   }
-  // Fallback: escaped plain text
-  return `<pre style="white-space:pre-wrap">${escHtml(content)}</pre>`;
+  try {
+    // Pre-process LaTeX: replace $...$ and $$...$$ with KaTeX-rendered HTML
+    // before passing to marked so that markdown doesn't mangle math symbols.
+    const math = [];
+    let processed = content
+      // Block math $$...$$ first (must come before inline)
+      .replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => {
+        if (typeof window.katex === 'undefined') return `<span class="math-block">$$${tex}$$</span>`;
+        try {
+          const html = window.katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false });
+          math.push(html);
+          return `\x00MATH${math.length - 1}\x00`;
+        } catch (_) { return `$$${tex}$$`; }
+      })
+      // Inline math $...$
+      .replace(/\$([^\n$]+?)\$/g, (_, tex) => {
+        if (typeof window.katex === 'undefined') return `<span class="math-inline">$${tex}$</span>`;
+        try {
+          const html = window.katex.renderToString(tex.trim(), { displayMode: false, throwOnError: false });
+          math.push(html);
+          return `\x00MATH${math.length - 1}\x00`;
+        } catch (_) { return `$${tex}$`; }
+      });
+
+    // Render markdown
+    let html = window.marked.parse(processed, { breaks: true, gfm: true });
+
+    // Restore math placeholders
+    html = html.replace(/\x00MATH(\d+)\x00/g, (_, i) => math[+i] || '');
+    return html;
+  } catch (e) {
+    return `<pre style="white-space:pre-wrap">${escHtml(content)}</pre>`;
+  }
 }
 
 function _buildCard(file, expanded) {
