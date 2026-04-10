@@ -398,6 +398,85 @@ def _load_csv_table(project_dir: Path) -> list[dict]:
 
 _SEED_RE = re.compile(r'_s\d+(_r\d+)?$')
 _PHASE_PREFIX_RE = re.compile(r'^(pilot\d*|exp\d*|full\d*|run\d*)_', re.I)
+# Matches a seed suffix: _s<digits> optionally followed by _r<digits>
+_CELL_SEED_RE = re.compile(r'^_s\d+(_r\d+)?$')
+
+
+def _collect_seed_entries(exp_id: str, dispatch_map: dict[str, dict]) -> list[dict]:
+    """Return dispatch entries for exp_id itself AND any seed variants (exp_id_s0, exp_id_s1 …).
+
+    A valid seed variant has the form ``<exp_id>_s<digits>`` (optionally followed by
+    ``_r<digits>``).  This avoids false-positive matches like ``exp1_small`` being
+    treated as a seed of ``exp1``.
+    """
+    entries: list[dict] = []
+    prefix = exp_id + "_s"
+    for key, val in dispatch_map.items():
+        if key == exp_id:
+            entries.append(val)
+        elif key.startswith(prefix):
+            # Ensure the suffix after exp_id is purely _s<digits>[_r<digits>]
+            suffix = key[len(exp_id):]
+            if _CELL_SEED_RE.match(suffix):
+                entries.append(val)
+    return entries
+
+
+def _aggregate_seed_entries(entries: list[dict], exp_id: str) -> dict:
+    """Merge a list of seed dispatch entries into a single aggregated dict.
+
+    Status precedence: running > failed > done > pending > todo.
+    Results: mean ± std across seeds (stored as {"metric": mean, "metric_std": std}).
+    Also propagates finished, host, wandb_url, etc. from the first done entry.
+    """
+    if not entries:
+        return {}
+    if len(entries) == 1:
+        return entries[0]
+
+    # Priority: running (still active) > done (has results) > failed > pending > todo.
+    # A mix of done+failed seeds still shows "done" so results are displayed.
+    STATUS_RANK = {"running": 4, "done": 3, "failed": 2, "pending": 1, "todo": 0}
+    best_status = max((e.get("status", "todo") for e in entries),
+                      key=lambda s: STATUS_RANK.get(s, 0))
+
+    # Aggregate numeric results across seeds
+    metric_vals: dict[str, list[float]] = {}
+    for e in entries:
+        results = e.get("results") or e.get("metrics") or {}
+        for metric, val in results.items():
+            try:
+                metric_vals.setdefault(metric, []).append(float(val))
+            except (TypeError, ValueError):
+                pass
+
+    agg_results: dict[str, object] = {}
+    for metric, vals in metric_vals.items():
+        mean = sum(vals) / len(vals)
+        agg_results[metric] = round(mean, 4)
+        if len(vals) > 1:
+            agg_results[f"{metric}_std"] = round(statistics.stdev(vals), 4)
+
+    # Pick representative metadata from the "best" (done) entry, or first
+    done_entries = [e for e in entries if e.get("status") == "done"]
+    rep = done_entries[0] if done_entries else entries[0]
+
+    merged: dict = {
+        "id":        rep.get("id", exp_id),
+        "status":    best_status,
+        "results":   agg_results if agg_results else (rep.get("results") or {}),
+        "seed_count": len(entries),
+    }
+    for field in ("wandb_url", "wandb_run_id", "hf_artifact_url",
+                  "host", "started", "retry_count", "notes"):
+        if rep.get(field) is not None:
+            merged[field] = rep[field]
+    # Use the latest 'finished' timestamp across all done seeds
+    finished_times = [e["finished"] for e in entries
+                      if e.get("finished") and e.get("status") == "done"]
+    if finished_times:
+        merged["finished"] = max(finished_times)
+    return merged
 
 # ── Experiment design table ───────────────────────────────────────────────────
 
@@ -443,24 +522,38 @@ def _get_phase_files(project_dir: Path, phase_group: str) -> dict:
     return {"files": result, "phase": phase_group}
 
 
-def _read_result_csv(result_file: str, exp_id: str) -> dict:
+def _read_result_csv(result_file: str, exp_id: str,
+                     project_dir: Path | None = None) -> dict:
     """Read a result CSV and return mean metric values for this exp_id.
 
     CSV schema (per experiments/pilot.md §4.3):
         exp_id, method, dataset, group, metric, seed, value
 
+    result_file may be an absolute path or a path relative to project_dir.
     Returns e.g. {"acc": 89.1, "ece": 0.045} — mean across seeds,
     group=="main" rows only.  Returns {} on any error.
     """
     try:
         p = Path(result_file)
+        # Prefer absolute path; fall back to project_dir-relative path
+        if not p.is_absolute() or not p.is_file():
+            if project_dir is not None:
+                rel = project_dir / result_file
+                if rel.is_file():
+                    p = rel
         if not p.is_file():
             return {}
         rows = []
         with open(p, newline="") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                if row.get("exp_id") == exp_id and row.get("group") == "main":
+                # Accept rows matching exp_id exactly OR seed variants (exp_id_s0 …)
+                row_eid = row.get("exp_id", "")
+                if row.get("group") == "main" and (
+                    row_eid == exp_id
+                    or (row_eid.startswith(exp_id + "_s")
+                        and _CELL_SEED_RE.match(row_eid[len(exp_id):]))
+                ):
                     rows.append(row)
         if not rows:
             return {}
@@ -497,35 +590,54 @@ def _get_exp_table(project_dir: Path, table_type: str) -> dict:
         # Merge dispatch status/results into each cell
         for cell in design.get("cells", []):
             exp_id = cell.get("exp_id")
-            if exp_id and exp_id in dispatch_map:
-                d = dispatch_map[exp_id]
-                # Only overwrite status from dispatch if dispatch actually has one
-                if d.get("status"):
-                    cell["status"] = d["status"]
-                elif "status" not in cell:
+            if not exp_id:
+                if "status" not in cell:
                     cell["status"] = "todo"
-                # Results: prefer dispatch field; fallback to reading the CSV directly
-                results = d.get("results") or d.get("metrics") or {}
-                if not results and d.get("status") == "done" and d.get("result_file"):
-                    results = _read_result_csv(d["result_file"], exp_id)
-                if results:
-                    cell["results"] = results
-                if d.get("wandb_url") or d.get("wandb_run_id"):
-                    cell["wandb_url"] = d.get("wandb_url") or d.get("wandb_run_id")
-                if d.get("hf_artifact_url"):
-                    cell["hf_artifact_url"] = d["hf_artifact_url"]
-                if d.get("host"):
-                    cell["host"] = d["host"]
-                if d.get("started"):
-                    cell["started"] = d["started"]
-                if d.get("finished"):
-                    cell["finished"] = d["finished"]
-                if d.get("retry_count") is not None:
-                    cell["retry_count"] = d["retry_count"]
-                if d.get("notes"):
-                    cell["notes"] = d["notes"]
+                continue
+
+            # Collect exact match + seed variants (exp_id_s0, exp_id_s1, …)
+            seed_entries = _collect_seed_entries(exp_id, dispatch_map)
+            if not seed_entries:
+                if "status" not in cell:
+                    cell["status"] = "todo"
+                continue
+
+            d = _aggregate_seed_entries(seed_entries, exp_id)
+
+            # Only overwrite status from dispatch if dispatch actually has one
+            if d.get("status"):
+                cell["status"] = d["status"]
             elif "status" not in cell:
                 cell["status"] = "todo"
+
+            # Results: prefer aggregated dispatch field; fallback to reading the CSV directly
+            results = d.get("results") or d.get("metrics") or {}
+            if not results and d.get("status") == "done":
+                # Try to read from result_file of the representative (or any done) entry
+                done_entries = [e for e in seed_entries if e.get("status") == "done"]
+                for de in done_entries:
+                    if de.get("result_file"):
+                        results = _read_result_csv(de["result_file"], exp_id, project_dir)
+                        if results:
+                            break
+            if results:
+                cell["results"] = results
+            if d.get("seed_count", 1) > 1:
+                cell["seed_count"] = d["seed_count"]
+            if d.get("wandb_url") or d.get("wandb_run_id"):
+                cell["wandb_url"] = d.get("wandb_url") or d.get("wandb_run_id")
+            if d.get("hf_artifact_url"):
+                cell["hf_artifact_url"] = d["hf_artifact_url"]
+            if d.get("host"):
+                cell["host"] = d["host"]
+            if d.get("started"):
+                cell["started"] = d["started"]
+            if d.get("finished"):
+                cell["finished"] = d["finished"]
+            if d.get("retry_count") is not None:
+                cell["retry_count"] = d["retry_count"]
+            if d.get("notes"):
+                cell["notes"] = d["notes"]
         design["found"] = True
     else:
         # Auto-build from dispatch state if no design file
@@ -571,16 +683,24 @@ def _auto_build_table(dispatch_map: dict, table_type: str) -> dict:
             cols_seen[dataset] = {"id": dataset, "label": dataset, "metric": ""}
 
         results = exp.get("results") or exp.get("metrics") or {}
-        cells.append({
+        cell_entry: dict = {
             "exp_id":    eid,
             "row":       method,
             "col":       dataset,
             "status":    exp.get("status", "todo"),
             "results":   results,
-            "wandb_url": exp.get("wandb_url", ""),
+            "wandb_url": exp.get("wandb_url") or exp.get("wandb_run_id") or "",
             "host":      exp.get("host", ""),
             "started":   exp.get("started", ""),
-        })
+            "finished":  exp.get("finished", ""),
+        }
+        if exp.get("hf_artifact_url"):
+            cell_entry["hf_artifact_url"] = exp["hf_artifact_url"]
+        if exp.get("retry_count") is not None:
+            cell_entry["retry_count"] = exp["retry_count"]
+        if exp.get("notes"):
+            cell_entry["notes"] = exp["notes"]
+        cells.append(cell_entry)
 
     return {
         "title":       ("Pilot" if table_type == "pilot" else "Full") + " Experiments",

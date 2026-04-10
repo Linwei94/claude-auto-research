@@ -146,9 +146,11 @@ function _buildTable(data, num) {
             td.innerHTML = `<span class="lt-fail">✗</span>`;
           } else if (st === 'done') {
             const s = v !== null ? v.toFixed(1) : '—';
+            const sd = _std(cell);
+            const sdStr = (sd !== null && v !== null) ? `<span class="lt-std">±${sd.toFixed(1)}</span>` : '';
             td.innerHTML = best
-              ? `<span class="lt-val lt-best">${s}</span>`
-              : `<span class="lt-val">${s}</span>`;
+              ? `<span class="lt-val lt-best">${s}${sdStr}</span>`
+              : `<span class="lt-val">${s}${sdStr}</span>`;
           } else {
             td.innerHTML = `<span class="lt-pending">—</span>`;
           }
@@ -194,15 +196,16 @@ function _showPanel(cell, row, col) {
   document.getElementById('lt-panel-title').textContent =
     `${row.label} — ${col.label}`;
 
-  const st      = cell.status || 'todo';
-  const v       = _num(cell);
-  const wandb   = cell.wandb_url || cell.wandb_run_id || '';
-  const hf      = cell.hf_artifact_url || '';
-  const started = cell.started  ? new Date(cell.started).toLocaleString()  : '—';
-  const ended   = cell.finished ? new Date(cell.finished).toLocaleString() : '—';
-  const host    = cell.host || '—';
-  const retries = cell.retry_count || 0;
-  const notes   = cell.notes || '';
+  const st       = cell.status || 'todo';
+  const v        = _num(cell);
+  const wandb    = cell.wandb_url || cell.wandb_run_id || '';
+  const hf       = cell.hf_artifact_url || '';
+  const started  = cell.started  ? new Date(cell.started).toLocaleString()  : '—';
+  const ended    = cell.finished ? new Date(cell.finished).toLocaleString() : '—';
+  const host     = cell.host || '—';
+  const retries  = cell.retry_count || 0;
+  const notes    = cell.notes || '';
+  const seedCount = cell.seed_count || null;
 
   const stColor = {
     done:    'var(--green)', running: 'var(--blue)',
@@ -212,10 +215,21 @@ function _showPanel(cell, row, col) {
 
   // Metric section
   let metricsHtml = '';
-  if (v !== null) metricsHtml += `<div class="lt-dp-bignum">${v.toFixed(4)}</div>`;
-  const resultRows = Object.entries(cell.results || {})
-    .map(([k, val]) =>
-      `<div class="lt-dp-kv"><span class="lt-dp-k">${_esc(k)}</span><span class="lt-dp-v">${_esc(String(val))}</span></div>`)
+  const sd = _std(cell);
+  if (v !== null) {
+    const sdPart = sd !== null ? `<span style="color:var(--text-dim);font-size:14px"> ±${sd.toFixed(4)}</span>` : '';
+    metricsHtml += `<div class="lt-dp-bignum">${v.toFixed(4)}${sdPart}</div>`;
+  }
+  const results = cell.results || {};
+  // Show non-_std keys; pair each metric with its std if present
+  const resultRows = Object.entries(results)
+    .filter(([k]) => !k.endsWith('_std'))
+    .map(([k, val]) => {
+      const stdVal = results[k + '_std'];
+      const stdSpan = stdVal !== undefined
+        ? `<span style="color:var(--text-dim)"> ±${_esc(String(stdVal))}</span>` : '';
+      return `<div class="lt-dp-kv"><span class="lt-dp-k">${_esc(k)}</span><span class="lt-dp-v">${_esc(String(val))}${stdSpan}</span></div>`;
+    })
     .join('');
   if (resultRows) metricsHtml += resultRows;
 
@@ -240,8 +254,9 @@ function _showPanel(cell, row, col) {
     <div class="lt-dp-kv"><span class="lt-dp-k">Host</span><span class="lt-dp-v">${_esc(host)}</span></div>
     <div class="lt-dp-kv"><span class="lt-dp-k">Started</span><span class="lt-dp-v">${_esc(started)}</span></div>
     <div class="lt-dp-kv"><span class="lt-dp-k">Finished</span><span class="lt-dp-v">${_esc(ended)}</span></div>
-    ${retries ? `<div class="lt-dp-kv"><span class="lt-dp-k">Retries</span><span class="lt-dp-v">${retries}</span></div>` : ''}
-    ${notes   ? `<div class="lt-dp-kv"><span class="lt-dp-k">Notes</span><span class="lt-dp-v">${_esc(notes)}</span></div>` : ''}
+    ${seedCount ? `<div class="lt-dp-kv"><span class="lt-dp-k">Seeds</span><span class="lt-dp-v">${seedCount}</span></div>` : ''}
+    ${retries   ? `<div class="lt-dp-kv"><span class="lt-dp-k">Retries</span><span class="lt-dp-v">${retries}</span></div>` : ''}
+    ${notes     ? `<div class="lt-dp-kv"><span class="lt-dp-k">Notes</span><span class="lt-dp-v">${_esc(notes)}</span></div>` : ''}
   `;
 
   _panel.classList.add('open');
@@ -249,16 +264,30 @@ function _showPanel(cell, row, col) {
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-/** Extract a primary numeric value from a cell. */
+/** Extract a primary numeric value from a cell (ignores _std keys). */
 function _num(cell) {
   const r = cell.results || {};
-  const keys = Object.keys(r);
+  // Skip keys that are std suffixes (metric_std)
+  const keys = Object.keys(r).filter(k => !k.endsWith('_std'));
   if (keys.length) {
     const n = parseFloat(r[keys[0]]);
     return isNaN(n) ? null : n;
   }
   if (cell.value !== undefined) {
     const n = parseFloat(cell.value);
+    return isNaN(n) ? null : n;
+  }
+  return null;
+}
+
+/** Extract the std of the primary metric from a cell, or null. */
+function _std(cell) {
+  const r = cell.results || {};
+  const keys = Object.keys(r).filter(k => !k.endsWith('_std'));
+  if (!keys.length) return null;
+  const stdKey = keys[0] + '_std';
+  if (stdKey in r) {
+    const n = parseFloat(r[stdKey]);
     return isNaN(n) ? null : n;
   }
   return null;

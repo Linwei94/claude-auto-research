@@ -220,12 +220,6 @@ export async function refresh() {
     // phase may 404 if TODO.md doesn't exist yet — keep previous value
     if (phaseResult.status === 'fulfilled') state.phase = phaseResult.value;
     updateSidebarStats();
-    // Show Writing tab only when in writing phase (10+)
-    const writingLink = document.getElementById('nav-writing');
-    if (writingLink) {
-      const cp = state.phase?.current_phase;
-      writingLink.style.display = (cp !== null && cp !== undefined && cp >= 10) ? '' : 'none';
-    }
     // Skip re-rendering PDF views on background refresh (avoids resetting iframe scroll).
     const isPdfView = state.view === 'phase-writing';
     if (!isPdfView) renderView();
@@ -340,11 +334,18 @@ function connectSSE() {
     _sse.onmessage = (e) => {
       try {
         const ev = JSON.parse(e.data);
-        // Only update the phase badge on SSE events — no automatic data refresh.
-        // User refreshes manually via the refresh button.
-        if (ev.type === 'connected' && ev.phase !== undefined && ev.phase !== null) {
-          const badge = document.querySelector(`.proj-phase-badge[data-proj="${CSS.escape(state.project)}"]`);
-          if (badge) badge.textContent = `P${ev.phase}`;
+        if (ev.type === 'connected') {
+          // Update phase badge on initial connect — do NOT refresh data here
+          // (selectProject already called refresh() right before connectSSE()).
+          if (ev.phase !== undefined && ev.phase !== null) {
+            const badge = document.querySelector(`.proj-phase-badge[data-proj="${CSS.escape(state.project)}"]`);
+            if (badge) badge.textContent = `P${ev.phase}`;
+          }
+        } else if (ev.type === 'run_update' || ev.type === 'update') {
+          // A new experiment result arrived — refresh data and re-render if on results view.
+          if (state.view === 'results') {
+            refresh();
+          }
         }
       } catch (_) {}
     };
