@@ -238,6 +238,7 @@ exp_id | host | gpu | command | estimated_vram_mb
 ```json
 {
   "title": "<human title, e.g. 'Pilot: TTA on CIFAR'>",
+  "caption": "<full academic table caption that could appear in the paper, e.g. 'Comparison of our method against baselines on CIFAR-10-C and ImageNet-C under test-time adaptation. Bold = best per column.'>",
   "description": "<one-line description of what this batch tests>",
   "phase": "pilot",
   "rows": [{"id": "<method_id>", "label": "<display name>", "group": "baseline|ours|ablation", "note": "<optional purpose>"}],

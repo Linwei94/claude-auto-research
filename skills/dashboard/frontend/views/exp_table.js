@@ -1,314 +1,270 @@
 /**
- * exp_table.js — Experiment design table view.
+ * exp_table.js — LaTeX-style experiment results tables
  *
- * Renders a 2-D table (rows = methods, cols = datasets/scenarios)
- * where each cell is one experiment.
- *
- * Cell status:
- *   todo     → "—"     (dim)
- *   pending  → "⏳"    (orange)
- *   running  → "⟳"    (blue, animated)
- *   done     → metric value (green if best in column)
- *   failed   → "✗"     (red)
- *
- * Click on a done+wandb cell → opens wandb in new tab directly.
- * Click on any other cell → shows detail tooltip.
+ * The "Results" tab. Fetches pilot_design.json + full_design.json and
+ * renders them as academic paper-style tables (booktabs layout).
+ * Each cell = one experiment. Click → slide-in detail panel.
  */
 
-// ── Singleton tooltip (avoids id collision + listener leaks) ─────────────────
+// Module-level singleton detail panel
+let _panel = null;
 
-let _tooltip = null;
-let _tooltipCloseHandler = null;
+// ── Main export ────────────────────────────────────────────────────────────────
 
-function _getTooltip() {
-  if (!_tooltip || !document.body.contains(_tooltip)) {
-    _tooltip = document.createElement('div');
-    _tooltip.id = 'exp-tooltip-singleton';
-    Object.assign(_tooltip.style, {
-      display:       'none',
-      position:      'fixed',
-      zIndex:        '9999',
-      background:    'var(--surface)',
-      border:        '1px solid var(--border)',
-      borderRadius:  '6px',
-      padding:       '10px 14px',
-      fontSize:      '12px',
-      boxShadow:     '0 4px 16px rgba(0,0,0,0.45)',
-      maxWidth:      '320px',
-      lineHeight:    '1.5',
-    });
-    document.body.appendChild(_tooltip);
-  }
-  return _tooltip;
-}
-
-function _showTooltip(html, x, y) {
-  const tip = _getTooltip();
-  tip.innerHTML = html;
-  tip.style.display = 'block';
-
-  // Keep within viewport
-  const vw = window.innerWidth, vh = window.innerHeight;
-  tip.style.left = Math.min(x + 12, vw - 340) + 'px';
-  tip.style.top  = Math.min(y + 12, vh - 220) + 'px';
-
-  // Register one-time outside-click closer (remove any previous)
-  if (_tooltipCloseHandler) {
-    document.removeEventListener('click', _tooltipCloseHandler, true);
-  }
-  _tooltipCloseHandler = (e) => {
-    if (!tip.contains(e.target)) {
-      tip.style.display = 'none';
-      document.removeEventListener('click', _tooltipCloseHandler, true);
-      _tooltipCloseHandler = null;
-    }
-  };
-  // Delay attachment so the current click event doesn't immediately close it
-  setTimeout(() => document.addEventListener('click', _tooltipCloseHandler, true), 0);
-}
-
-function _hideTooltip() {
-  if (_tooltip) _tooltip.style.display = 'none';
-  if (_tooltipCloseHandler) {
-    document.removeEventListener('click', _tooltipCloseHandler, true);
-    _tooltipCloseHandler = null;
-  }
-}
-
-// ── Main render ───────────────────────────────────────────────────────────────
-
-export async function renderExpTable(container, state, tableType) {
+export async function renderResultsView(container, state) {
   container.innerHTML = '<div class="loading">Loading…</div>';
 
-  let data;
-  try {
-    const res = await fetch(`/api/exp-table/${encodeURIComponent(state.project)}/${tableType}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    data = await res.json();
-  } catch (e) {
-    container.innerHTML = `<div class="error-box">Failed to load experiment table: ${escHtml(e.message)}</div>`;
+  const tables = [];
+  for (const type of ['pilot', 'full']) {
+    try {
+      const res = await fetch(
+        `/api/exp-table/${encodeURIComponent(state.project)}/${type}`
+      );
+      if (!res.ok) continue;
+      const data = await res.json();
+      // Only include if the design file exists or there are actual cells
+      if (data.found || (data.cells && data.cells.length)) {
+        tables.push({ ...data, _type: type });
+      }
+    } catch { /* server may not have the file yet */ }
+  }
+
+  if (!tables.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">📊</div>
+        <p>No experiment tables yet.</p>
+        <p style="font-size:12px;margin-top:8px;color:var(--text-dim)">
+          Lab Agent writes <code>experiments/pilot_design.json</code> at the end of Phase 3,
+          and <code>experiments/full_design.json</code> at the end of Phase 6.
+        </p>
+      </div>`;
     return;
   }
 
-  const { rows = [], cols = [], cells = [], title = '', description = '', found } = data;
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'padding:28px 32px;max-width:1200px';
 
-  // Build cell lookup: "row_id!!col_id" → cell  (!! avoids pipe conflicts)
-  const SEP = '!!';
+  tables.forEach((data, i) => wrap.appendChild(_buildTable(data, i + 1)));
+
+  container.innerHTML = '';
+  container.appendChild(wrap);
+  _ensurePanel();
+}
+
+// ── Table builder ──────────────────────────────────────────────────────────────
+
+function _buildTable(data, num) {
+  const { title = '', caption = '', rows = [], cols = [], cells = [] } = data;
+
+  // Cell lookup: "row!!col" → cell object
   const cellMap = {};
-  cells.forEach(c => { cellMap[c.row + SEP + c.col] = c; });
+  for (const c of cells) cellMap[`${c.row}!!${c.col}`] = c;
 
-  // Compute best value per col for bold highlight
-  const bestPerCol = {};
-  cols.forEach(col => {
-    let best = null;
-    rows.forEach(row => {
-      const cell = cellMap[row.id + SEP + col.id];
-      if (!cell || cell.status !== 'done') return;
-      const v = _primaryVal(cell, col);
-      if (v !== null && (best === null || v > best)) best = v;
+  // Best numeric value per column (for bolding)
+  const colBest = {};
+  for (const col of cols) {
+    for (const c of cells) {
+      if (c.col !== col.id || c.status !== 'done') continue;
+      const v = _num(c);
+      if (v !== null && (colBest[col.id] === undefined || v > colBest[col.id]))
+        colBest[col.id] = v;
+    }
+  }
+
+  // Group rows in display order
+  const GROUP_ORDER = ['baseline', 'ours', 'ablation'];
+  const grouped = {};
+  for (const r of rows) (grouped[r.group || 'other'] = grouped[r.group || 'other'] || []).push(r);
+  const orderedKeys = [
+    ...GROUP_ORDER.filter(g => grouped[g]),
+    ...Object.keys(grouped).filter(g => !GROUP_ORDER.includes(g)),
+  ];
+
+  // ── Caption ──────────────────────────────────────────────────────────────────
+  const capText = caption || title || (data._type === 'pilot' ? 'Pilot experiments' : 'Full experiments');
+  const outer = document.createElement('div');
+  outer.className = 'lt-wrap';
+  outer.innerHTML = `<div class="lt-caption">Table ${num}: ${_esc(capText)}</div>`;
+
+  // ── Table ────────────────────────────────────────────────────────────────────
+  const scroll = document.createElement('div');
+  scroll.className = 'lt-scroll';
+
+  const tbl = document.createElement('table');
+  tbl.className = 'lt-table';
+
+  // Header row
+  const thead = document.createElement('thead');
+  const htr = document.createElement('tr');
+  htr.innerHTML =
+    `<th class="lt-th-method">Method</th>` +
+    cols.map(c => `<th class="lt-th-col" title="${_esc(c.metric || '')}">${_esc(c.label)}</th>`).join('');
+  thead.appendChild(htr);
+  tbl.appendChild(thead);
+
+  // Body
+  const tbody = document.createElement('tbody');
+  orderedKeys.forEach((gid, gi) => {
+    // Thin separator between groups (not before first group)
+    if (gi > 0) {
+      const sep = document.createElement('tr');
+      sep.className = 'lt-sep';
+      sep.innerHTML = `<td colspan="${cols.length + 1}"></td>`;
+      tbody.appendChild(sep);
+    }
+
+    (grouped[gid] || []).forEach(row => {
+      const tr = document.createElement('tr');
+
+      // Method name
+      const mTd = document.createElement('td');
+      mTd.className = 'lt-td-method';
+      mTd.textContent = row.label;
+      if (row.note) mTd.title = row.note;
+      tr.appendChild(mTd);
+
+      // Data cells
+      cols.forEach(col => {
+        const cell = cellMap[`${row.id}!!${col.id}`];
+        const td = document.createElement('td');
+        td.className = 'lt-td-val';
+
+        if (!cell) {
+          td.innerHTML = `<span class="lt-empty">—</span>`;
+        } else {
+          const st = cell.status || 'todo';
+          const v  = _num(cell);
+          const best = v !== null && colBest[col.id] !== undefined &&
+                       Math.abs(v - colBest[col.id]) < 1e-6;
+
+          if (st === 'todo' || st === 'pending' || st === 'cancelled') {
+            td.innerHTML = `<span class="lt-pending">—</span>`;
+          } else if (st === 'running') {
+            td.innerHTML = `<span class="lt-running">···</span>`;
+          } else if (st === 'failed') {
+            td.innerHTML = `<span class="lt-fail">✗</span>`;
+          } else if (st === 'done') {
+            const s = v !== null ? v.toFixed(1) : '—';
+            td.innerHTML = best
+              ? `<span class="lt-val lt-best">${s}</span>`
+              : `<span class="lt-val">${s}</span>`;
+          } else {
+            td.innerHTML = `<span class="lt-pending">—</span>`;
+          }
+
+          // Clickable for any cell with a real dispatch entry
+          if (st !== 'todo') {
+            td.classList.add('lt-click');
+            td.addEventListener('click', () => _showPanel(cell, row, col));
+          }
+        }
+        tr.appendChild(td);
+      });
+
+      tbody.appendChild(tr);
     });
-    bestPerCol[col.id] = best;
   });
 
-  // Summary stats
-  const stats = { todo: 0, pending: 0, running: 0, done: 0, failed: 0 };
-  cells.forEach(c => { const k = c.status || 'todo'; stats[k] = (stats[k] || 0) + 1; });
-
-  const notFound = !found && !cells.length;
-
-  container.innerHTML = notFound
-    ? `<div style="padding:20px">${_emptyDesign(tableType)}</div>`
-    : `<div style="padding:16px 20px;max-width:100%;overflow-x:auto">${_buildTable(title, description, rows, cols, cellMap, bestPerCol, stats, SEP)}</div>`;
-
-  // Attach click handlers to cells
-  container.querySelectorAll('[data-cell]').forEach(td => {
-    td.addEventListener('click', (e) => {
-      const key  = td.dataset.cell;
-      const cell = cellMap[key];
-      if (!cell) return;
-
-      // Done + wandb → open wandb directly, no tooltip
-      if (cell.status === 'done' && cell.wandb_url) {
-        window.open(cell.wandb_url, '_blank');
-        return;
-      }
-
-      _showTooltip(_tooltipHtml(cell), e.clientX, e.clientY);
-      e.stopPropagation();
-    });
-  });
+  tbl.appendChild(tbody);
+  scroll.appendChild(tbl);
+  outer.appendChild(scroll);
+  return outer;
 }
 
-// ── Empty state ───────────────────────────────────────────────────────────────
+// ── Detail panel ───────────────────────────────────────────────────────────────
 
-function _emptyDesign(tableType) {
-  const phase = tableType === 'pilot' ? 'Pilot' : 'Full Experiment';
-  return `
-    <div class="empty-state">
-      <div class="empty-icon">📋</div>
-      <p>No experiment design table yet.</p>
-      <p style="margin-top:8px;font-size:12px;color:var(--text-dim)">
-        Lab Agent writes <code>experiments/${tableType}_design.json</code><br>
-        to define the ${phase} table structure.
-      </p>
-    </div>`;
-}
-
-// ── Table HTML ────────────────────────────────────────────────────────────────
-
-function _buildTable(title, description, rows, cols, cellMap, bestPerCol, stats, SEP) {
-  const statBadges = [
-    stats.running ? `<span style="color:var(--blue)">⟳ ${stats.running} running</span>` : '',
-    stats.pending ? `<span style="color:var(--orange)">⏳ ${stats.pending} pending</span>` : '',
-    stats.done    ? `<span style="color:var(--green)">✓ ${stats.done} done</span>`       : '',
-    stats.failed  ? `<span style="color:var(--red)">✗ ${stats.failed} failed</span>`     : '',
-    stats.todo    ? `<span style="color:var(--text-dim)">— ${stats.todo} todo</span>`     : '',
-  ].filter(Boolean).join(' · ');
-
-  if (!rows.length) {
-    return `<div class="empty-state"><div class="empty-icon">⚗</div><p>Design table has no rows yet.</p></div>`;
-  }
-
-  const thead = `<tr>
-    <th style="min-width:160px;position:sticky;left:0;z-index:2;background:var(--surface2)">Method</th>
-    ${cols.map(col => `
-      <th style="min-width:120px;text-align:center">
-        ${escHtml(col.label)}
-        ${col.metric ? `<br><span style="color:var(--text-dim);font-size:10px;font-weight:400">${escHtml(col.metric)}</span>` : ''}
-      </th>`).join('')}
-  </tr>`;
-
-  const tbody = rows.map(row => {
-    const groupTag = row.group && row.group !== 'other'
-      ? ` <span style="font-size:10px;color:var(--text-dim)">[${escHtml(row.group)}]</span>` : '';
-    const note = row.note
-      ? `<div style="font-size:10px;color:var(--text-dim);margin-top:1px;font-weight:400">${escHtml(row.note)}</div>` : '';
-
-    const dataCells = cols.map(col => _renderCell(cellMap, row, col, bestPerCol, SEP));
-    return `<tr>
-      <td style="font-weight:600;position:sticky;left:0;z-index:1;background:var(--surface)">
-        ${escHtml(row.label)}${groupTag}${note}
-      </td>
-      ${dataCells.join('')}
-    </tr>`;
-  }).join('');
-
-  const hint = `<div style="margin-top:10px;font-size:11px;color:var(--text-dim)">
-    Click a cell for details · <span style="color:var(--green)">Done</span> cells with wandb link open directly
-  </div>`;
-
-  return `
-    <div style="margin-bottom:14px">
-      <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:4px;flex-wrap:wrap">
-        <span style="font-size:15px;font-weight:700">${escHtml(title)}</span>
-        ${statBadges ? `<span style="font-size:12px">${statBadges}</span>` : ''}
-      </div>
-      ${description ? `<div style="font-size:12px;color:var(--text-dim);margin-bottom:10px">${escHtml(description)}</div>` : ''}
+function _ensurePanel() {
+  if (_panel && document.body.contains(_panel)) return;
+  _panel = document.createElement('div');
+  _panel.className = 'lt-panel';
+  _panel.innerHTML = `
+    <div class="lt-panel-hd">
+      <span class="lt-panel-title" id="lt-panel-title">—</span>
+      <button class="lt-panel-close" id="lt-panel-close" title="Close">✕</button>
     </div>
-    <div style="overflow-x:auto">
-      <table class="results-table exp-design-table" style="min-width:100%">
-        <thead>${thead}</thead>
-        <tbody>${tbody}</tbody>
-      </table>
+    <div class="lt-panel-body" id="lt-panel-body"></div>`;
+  document.body.appendChild(_panel);
+  document.getElementById('lt-panel-close').addEventListener('click', () =>
+    _panel.classList.remove('open'));
+}
+
+function _showPanel(cell, row, col) {
+  _ensurePanel();
+  document.getElementById('lt-panel-title').textContent =
+    `${row.label} — ${col.label}`;
+
+  const st      = cell.status || 'todo';
+  const v       = _num(cell);
+  const wandb   = cell.wandb_url || cell.wandb_run_id || '';
+  const hf      = cell.hf_artifact_url || '';
+  const started = cell.started  ? new Date(cell.started).toLocaleString()  : '—';
+  const ended   = cell.finished ? new Date(cell.finished).toLocaleString() : '—';
+  const host    = cell.host || '—';
+  const retries = cell.retry_count || 0;
+  const notes   = cell.notes || '';
+
+  const stColor = {
+    done:    'var(--green)', running: 'var(--blue)',
+    failed:  'var(--red)',   on_hold: 'var(--orange)',
+    pending: 'var(--text-dim)', todo: 'var(--text-dim)',
+  }[st] || 'var(--text-dim)';
+
+  // Metric section
+  let metricsHtml = '';
+  if (v !== null) metricsHtml += `<div class="lt-dp-bignum">${v.toFixed(4)}</div>`;
+  const resultRows = Object.entries(cell.results || {})
+    .map(([k, val]) =>
+      `<div class="lt-dp-kv"><span class="lt-dp-k">${_esc(k)}</span><span class="lt-dp-v">${_esc(String(val))}</span></div>`)
+    .join('');
+  if (resultRows) metricsHtml += resultRows;
+
+  // Links section
+  let linksHtml = '';
+  if (wandb) linksHtml += `<a href="${_esc(wandb)}" target="_blank" class="lt-dp-link">↗ WandB run</a>`;
+  if (hf)    linksHtml += `<a href="${_esc(hf)}"    target="_blank" class="lt-dp-link">↗ HF artifact</a>`;
+
+  document.getElementById('lt-panel-body').innerHTML = `
+    <div class="lt-dp-kv">
+      <span class="lt-dp-k">Experiment</span>
+      <code class="lt-dp-v" style="font-size:11px;word-break:break-all">${_esc(cell.exp_id || cell.id || '—')}</code>
     </div>
-    ${hint}`;
-}
-
-function _renderCell(cellMap, row, col, bestPerCol, SEP) {
-  const key   = row.id + SEP + col.id;
-  const cell  = cellMap[key];
-  // Use safe separator in data-cell (no HTML special chars in !!)
-  const attrs = `data-cell="${row.id}!!${col.id}" style="text-align:center;cursor:pointer"`;
-
-  if (!cell || cell.status === 'todo') {
-    return `<td ${attrs} class="cell-todo" title="${escHtml((cell && cell.purpose) || (cell && cell.exp_id) || '')}">—</td>`;
-  }
-  if (cell.status === 'pending') {
-    return `<td ${attrs} class="cell-pending" title="${escHtml(cell.exp_id || '')}">⏳</td>`;
-  }
-  if (cell.status === 'running') {
-    return `<td ${attrs} class="cell-running-exp" title="${escHtml(cell.exp_id || '')}">⟳</td>`;
-  }
-  if (cell.status === 'failed') {
-    return `<td ${attrs} class="cell-failed-exp" title="${escHtml(cell.exp_id || '')}">✗</td>`;
-  }
-  if (cell.status === 'done') {
-    const v      = _primaryVal(cell, col);
-    const best   = bestPerCol[col.id];
-    const isBest = v !== null && best !== null && Math.abs(v - best) < 1e-9;
-    const hasW   = !!cell.wandb_url;
-    const valStr = v !== null ? v.toFixed(4) : '✓';
-    const title  = hasW ? 'Click to open wandb ↗' : escHtml(cell.exp_id || '');
-    return `<td ${attrs} title="${title}" style="text-align:center;cursor:pointer">
-      <span style="font-family:monospace;font-size:13px;color:${isBest ? 'var(--green)' : 'inherit'};font-weight:${isBest ? '700' : '400'}">${valStr}</span>
-      ${hasW ? '<span style="font-size:10px;color:var(--text-dim);margin-left:2px">↗</span>' : ''}
-    </td>`;
-  }
-  return `<td ${attrs} class="cell-todo">?</td>`;
-}
-
-// ── Tooltip HTML ──────────────────────────────────────────────────────────────
-
-function _tooltipHtml(cell) {
-  const statusColor = {
-    done: 'var(--green)', running: 'var(--blue)',
-    pending: 'var(--orange)', failed: 'var(--red)', todo: 'var(--text-dim)',
-  }[cell.status] || 'var(--text-dim)';
-
-  const results = cell.results || {};
-  const metricsHtml = Object.keys(results).length
-    ? `<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">
-        ${Object.entries(results).map(([k, v]) =>
-          `<span style="background:var(--surface2);padding:2px 6px;border-radius:3px;font-size:11px">
-            <span style="color:var(--text-dim)">${escHtml(k)}</span>
-            <b> ${typeof v === 'number' ? v.toFixed(4) : escHtml(String(v))}</b>
-          </span>`).join('')}
-       </div>`
-    : '';
-
-  // Wandb link (for running/pending cells that already have a wandb URL)
-  const wandbBtn = cell.wandb_url
-    ? `<a href="${escHtml(cell.wandb_url)}" target="_blank"
-         style="display:inline-flex;align-items:center;gap:4px;margin-top:8px;padding:4px 10px;
-                background:#f6b93b;color:#1a1a1a;border-radius:4px;font-size:11px;
-                text-decoration:none;font-weight:600">
-         wandb ↗
-       </a>`
-    : '';
-
-  const purpose = cell.purpose
-    ? `<div style="color:var(--text-dim);font-size:11px;margin-top:4px;font-style:italic">${escHtml(cell.purpose)}</div>`
-    : '';
-
-  return `
-    <div style="font-weight:700;font-family:monospace;font-size:12px;margin-bottom:4px">
-      ${escHtml(cell.exp_id || '—')}
-      <span style="font-size:11px;color:${statusColor};font-weight:600;margin-left:6px">${cell.status}</span>
+    <div class="lt-dp-kv">
+      <span class="lt-dp-k">Status</span>
+      <span style="color:${stColor};font-weight:600">${_esc(st)}</span>
     </div>
-    ${purpose}
-    ${cell.host ? `<div style="font-size:11px;color:var(--text-dim)">🖥 ${escHtml(String(cell.host))}</div>` : ''}
-    ${cell.started ? `<div style="font-size:11px;color:var(--text-dim)">⏱ ${escHtml(String(cell.started))}</div>` : ''}
-    ${metricsHtml}
-    ${wandbBtn}`;
+    ${cell.purpose ? `<div class="lt-dp-kv"><span class="lt-dp-k">Purpose</span><span class="lt-dp-v">${_esc(cell.purpose)}</span></div>` : ''}
+    ${metricsHtml ? `<div class="lt-dp-sec">Metrics</div>${metricsHtml}` : ''}
+    ${linksHtml   ? `<div class="lt-dp-sec">Links</div><div class="lt-dp-links">${linksHtml}</div>` : ''}
+    <div class="lt-dp-sec">Run info</div>
+    <div class="lt-dp-kv"><span class="lt-dp-k">Host</span><span class="lt-dp-v">${_esc(host)}</span></div>
+    <div class="lt-dp-kv"><span class="lt-dp-k">Started</span><span class="lt-dp-v">${_esc(started)}</span></div>
+    <div class="lt-dp-kv"><span class="lt-dp-k">Finished</span><span class="lt-dp-v">${_esc(ended)}</span></div>
+    ${retries ? `<div class="lt-dp-kv"><span class="lt-dp-k">Retries</span><span class="lt-dp-v">${retries}</span></div>` : ''}
+    ${notes   ? `<div class="lt-dp-kv"><span class="lt-dp-k">Notes</span><span class="lt-dp-v">${_esc(notes)}</span></div>` : ''}
+  `;
+
+  _panel.classList.add('open');
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers ────────────────────────────────────────────────────────────────────
 
-function _primaryVal(cell, col) {
-  const results = cell.results || {};
-  if (!Object.keys(results).length) return null;
-  if (col.metric && col.metric in results) {
-    const v = parseFloat(results[col.metric]);
-    return isNaN(v) ? null : v;
+/** Extract a primary numeric value from a cell. */
+function _num(cell) {
+  const r = cell.results || {};
+  const keys = Object.keys(r);
+  if (keys.length) {
+    const n = parseFloat(r[keys[0]]);
+    return isNaN(n) ? null : n;
   }
-  for (const v of Object.values(results)) {
-    const f = parseFloat(v);
-    if (!isNaN(f)) return f;
+  if (cell.value !== undefined) {
+    const n = parseFloat(cell.value);
+    return isNaN(n) ? null : n;
   }
   return null;
 }
 
-function escHtml(s) {
+function _esc(s) {
   return String(s || '').replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }

@@ -441,13 +441,59 @@
     .md-body hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
     .md-body img { max-width: 100%; border-radius: 4px; }
 
-    /* ── Experiment design table cell states ──────────── */
-    .exp-design-table td { cursor: pointer; transition: background 0.12s; }
-    .exp-design-table td:hover { background: rgba(255,255,255,0.05); }
-    .cell-todo { color: var(--border); font-size: 15px; }
-    .cell-pending { font-size: 15px; }
-    .cell-running-exp { color: var(--blue); animation: pulse 1.2s ease-in-out infinite; font-size: 15px; }
-    .cell-failed-exp { color: var(--red); font-weight: 700; }
+    /* ── LaTeX-style experiment tables ──────────────────── */
+    .lt-wrap   { margin-bottom: 44px; }
+    .lt-caption {
+      font-size: 13px; font-style: italic;
+      color: var(--text-dim); margin-bottom: 10px; line-height: 1.5;
+    }
+    .lt-scroll { overflow-x: auto; }
+    .lt-table  { border-collapse: collapse; font-size: 13px; min-width: 360px; }
+
+    /* Booktabs-style: thick top + bottom, thin below header */
+    .lt-table thead tr:first-child th { border-top: 2px solid var(--text); padding-top: 7px; }
+    .lt-table thead tr:last-child  th { border-bottom: 1px solid var(--text); padding-bottom: 7px; }
+    .lt-table tbody tr:last-child  td { border-bottom: 2px solid var(--text); padding-bottom: 7px; }
+
+    .lt-table th, .lt-table td { padding: 5px 16px; }
+    .lt-th-method, .lt-td-method { text-align: left; padding-left: 0; min-width: 120px; font-size: 13px; }
+    .lt-th-col  { text-align: right; font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--text-dim); }
+    .lt-td-val  { text-align: right; }
+    .lt-val     { font-variant-numeric: tabular-nums; }
+    .lt-best    { font-weight: 700; }
+    .lt-pending { color: var(--text-dim); }
+    .lt-running { color: var(--blue); animation: pulse 1.5s ease-in-out infinite; letter-spacing: 3px; }
+    .lt-fail    { color: var(--red); font-weight: 700; }
+    .lt-empty   { color: var(--border); }
+    .lt-click   { cursor: pointer; transition: background 0.12s; }
+    .lt-click:hover { background: rgba(0,122,204,0.07); }
+    /* thin spacing between method groups */
+    .lt-sep td  { padding-top: 4px; padding-bottom: 0; }
+
+    /* ── Detail panel (slide-in from right) ─────────────── */
+    .lt-panel {
+      position: fixed; right: 0; top: 0; bottom: 0; width: 290px;
+      background: var(--sidebar); border-left: 1px solid var(--border);
+      transform: translateX(100%); transition: transform 0.2s ease;
+      z-index: 110; display: flex; flex-direction: column; overflow: hidden;
+    }
+    .lt-panel.open { transform: translateX(0); }
+    .lt-panel-hd {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 16px 12px; border-bottom: 1px solid var(--border);
+      flex-shrink: 0; background: var(--sidebar);
+    }
+    .lt-panel-title { font-size: 13px; font-weight: 600; }
+    .lt-panel-close { color: var(--text-dim); font-size: 14px; padding: 2px 6px; }
+    .lt-panel-body  { padding: 14px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+    .lt-dp-sec      { font-size: 10px; font-weight: 700; letter-spacing: 0.8px; text-transform: uppercase; color: var(--text-dim); margin-top: 8px; }
+    .lt-dp-kv, .lt-dp-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+    .lt-dp-k { font-size: 11px; color: var(--text-dim); flex-shrink: 0; }
+    .lt-dp-v { font-size: 12px; text-align: right; word-break: break-all; }
+    .lt-dp-bignum { font-size: 26px; font-weight: 700; color: var(--green); text-align: center; padding: 8px 0; font-variant-numeric: tabular-nums; }
+    .lt-dp-links { display: flex; flex-direction: column; gap: 6px; }
+    .lt-dp-link  { color: var(--accent); font-size: 12px; text-decoration: none; }
+    .lt-dp-link:hover { text-decoration: underline; }
 
     /* ── GPU view ────────────────────────────────────── */
     .gpu-host { margin-bottom: 14px; }
@@ -848,15 +894,15 @@
       <div id="phase-group-list" style="height:140px;overflow-y:auto"></div>
       <div class="sb-resize" id="sb-resize-2"></div>
     </div>
-    <!-- Per-project phase tabs (populated by app.js PHASE_GROUPS) -->
+    <!-- Per-project phase tabs -->
     <nav id="nav" style="border-top:1px solid var(--border);padding-top:4px">
-      <a class="nav-link" data-view="phase-setup"><span class="nav-icon">⚙</span>Setup</a>
+      <a class="nav-link" data-view="results"><span class="nav-icon">📊</span>Results</a>
       <a class="nav-link" data-view="phase-ideation"><span class="nav-icon">💡</span>Ideation</a>
-      <a class="nav-link" data-view="phase-pilot"><span class="nav-icon">🔬</span>Pilot</a>
-      <a class="nav-link" data-view="phase-experiments"><span class="nav-icon">⚗</span>Experiments</a>
-      <a class="nav-link" data-view="phase-analysis"><span class="nav-icon">📊</span>Analysis</a>
-      <a class="nav-link" data-view="phase-writing"><span class="nav-icon">✍</span>Writing</a>
+      <a class="nav-link" data-view="phase-analysis"><span class="nav-icon">📈</span>Analysis</a>
       <a class="nav-link" data-view="phase-rebuttal"><span class="nav-icon">📬</span>Rebuttal</a>
+      <a class="nav-link" data-view="phase-setup"><span class="nav-icon">⚙</span>Setup</a>
+      <!-- Writing tab: hidden until phase >= 10 -->
+      <a class="nav-link" data-view="phase-writing" id="nav-writing" style="display:none"><span class="nav-icon">✍</span>Writing</a>
     </nav>
     <div id="sidebar-stats" style="display:none">
       <div class="stat-chip"><span class="stat-val running" id="stat-running">0</span><span class="stat-lbl">Running</span></div>

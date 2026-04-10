@@ -3,57 +3,53 @@
  * State, routing, SSE, API helpers.
  */
 
-import { renderGPUs }      from './views/gpus.js';
-import { renderPaper }     from './views/paper.js';
-import { renderExpTable }  from './views/exp_table.js';
-import { renderPhaseView } from './views/phase_view.js';
+import { renderGPUs }         from './views/gpus.js';
+import { renderPaper }        from './views/paper.js';
+import { renderResultsView }  from './views/exp_table.js';
+import { renderPhaseView }    from './views/phase_view.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
 export const state = {
   project:  null,
-  view:     'phase-pilot',
+  view:     'results',
   research: null,
   phase:    null,
 };
 
-// Phase groups: view key → { label, icon, phaseNums, content }
-// content: 'files' = generic markdown files, 'pilot'/'full' = experiment design table, 'paper' = PDF
+// Phase groups — used for sidebar progress indicator and phase routing.
+// content: 'files' = markdown, 'paper' = PDF viewer
 export const PHASE_GROUPS = [
-  { key: 'phase-setup',       label: 'Setup',       icon: '⚙',  nums: [0],        content: 'files'  },
-  { key: 'phase-ideation',    label: 'Ideation',    icon: '💡', nums: [1, 2],     content: 'files'  },
-  { key: 'phase-pilot',       label: 'Pilot',       icon: '🔬', nums: [3, 4, 5],  content: 'pilot'  },
-  { key: 'phase-experiments', label: 'Experiments', icon: '⚗',  nums: [6, 7, 8],  content: 'full'   },
-  { key: 'phase-analysis',    label: 'Analysis',    icon: '📊', nums: [9],        content: 'files'  },
-  { key: 'phase-writing',     label: 'Writing',     icon: '✍',  nums: [10, 11],   content: 'paper'  },
-  { key: 'phase-rebuttal',    label: 'Rebuttal',    icon: '📬', nums: [12],       content: 'files'  },
+  { key: 'phase-setup',    label: 'Setup',    icon: '⚙',  nums: [0],        content: 'files' },
+  { key: 'phase-ideation', label: 'Ideation', icon: '💡', nums: [1, 2],     content: 'files' },
+  // Pilot (3-5) and Experiments (6-8) are shown together in the Results view
+  { key: 'phase-pilot',        label: 'Pilot',       icon: '🔬', nums: [3, 4, 5],  content: 'files' },
+  { key: 'phase-experiments',  label: 'Experiments', icon: '⚗',  nums: [6, 7, 8],  content: 'files' },
+  { key: 'phase-analysis', label: 'Analysis', icon: '📊', nums: [9],        content: 'files' },
+  { key: 'phase-writing',  label: 'Writing',  icon: '✍',  nums: [10, 11],   content: 'paper' },
+  { key: 'phase-rebuttal', label: 'Rebuttal', icon: '📬', nums: [12],       content: 'files' },
 ];
 
 // Lookup map: view key → phase group definition
 const _PHASE_GROUP_MAP = Object.fromEntries(PHASE_GROUPS.map(g => [g.key, g]));
 
 function _renderPhaseGroup(container, state, group) {
-  switch (group.content) {
-    case 'pilot':
-    case 'full':
-      return renderExpTable(container, state, group.content);
-    case 'paper':
-      return renderPaper(container, state);
-    default:
-      return renderPhaseView(container, state, group.key.replace('phase-', ''));
-  }
+  if (group.content === 'paper') return renderPaper(container, state);
+  return renderPhaseView(container, state, group.key.replace('phase-', ''));
 }
 
 // Canonical label for a view key (used in breadcrumb)
 function _viewLabel(viewKey) {
+  if (viewKey === 'results') return '📊 Results';
   const pg = _PHASE_GROUP_MAP[viewKey];
   if (pg) return `${pg.icon} ${pg.label}`;
   return viewKey.charAt(0).toUpperCase() + viewKey.slice(1);
 }
 
 const VIEWS = {
-  gpus:  renderGPUs,
-  paper: renderPaper,
+  gpus:    renderGPUs,
+  results: renderResultsView,
+  paper:   renderPaper,
   ...Object.fromEntries(PHASE_GROUPS.map(g => [g.key, (c, s) => _renderPhaseGroup(c, s, g)])),
 };
 
@@ -224,8 +220,14 @@ export async function refresh() {
     // phase may 404 if TODO.md doesn't exist yet — keep previous value
     if (phaseResult.status === 'fulfilled') state.phase = phaseResult.value;
     updateSidebarStats();
+    // Show Writing tab only when in writing phase (10+)
+    const writingLink = document.getElementById('nav-writing');
+    if (writingLink) {
+      const cp = state.phase?.current_phase;
+      writingLink.style.display = (cp !== null && cp !== undefined && cp >= 10) ? '' : 'none';
+    }
     // Skip re-rendering PDF views on background refresh (avoids resetting iframe scroll).
-    const isPdfView = state.view === 'paper' || state.view === 'phase-writing';
+    const isPdfView = state.view === 'phase-writing';
     if (!isPdfView) renderView();
     document.getElementById('last-updated').textContent =
       new Date().toLocaleTimeString();
@@ -290,8 +292,8 @@ function loadProjectList() {
       el.innerHTML = `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${escHtml(p.name)}</span><span class="proj-phase-badge" data-proj="${escHtml(p.name)}"></span>`;
       el.onclick = () => {
         // Navigate first (synchronous) so breadcrumb updates immediately
-        const targetView = state.view === 'gpus' ? 'phase-pilot'
-          : (state.view.startsWith('phase-') ? state.view : 'phase-pilot');
+        const targetView = state.view === 'gpus' ? 'results'
+          : (state.view.startsWith('phase-') || state.view === 'results' ? state.view : 'results');
         navigate(targetView);
         selectProject(p.name);
       };
@@ -396,7 +398,7 @@ function init() {
   const urlPathProject = window.location.pathname.replace(/^\//, '').split('/')[0];
   const urlQueryProject = new URLSearchParams(window.location.search).get('project');
   const urlProject = urlPathProject || urlQueryProject;
-  const savedView = localStorage.getItem('rdb:view') || 'phase-pilot';
+  const savedView = localStorage.getItem('rdb:view') || 'results';
   if (urlProject) {
     navigate(savedView);
     selectProject(urlProject).catch(() => {});
