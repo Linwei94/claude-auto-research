@@ -443,6 +443,41 @@ def _get_phase_files(project_dir: Path, phase_group: str) -> dict:
     return {"files": result, "phase": phase_group}
 
 
+def _read_result_csv(result_file: str, exp_id: str) -> dict:
+    """Read a result CSV and return mean metric values for this exp_id.
+
+    CSV schema (per experiments/pilot.md §4.3):
+        exp_id, method, dataset, group, metric, seed, value
+
+    Returns e.g. {"acc": 89.1, "ece": 0.045} — mean across seeds,
+    group=="main" rows only.  Returns {} on any error.
+    """
+    try:
+        p = Path(result_file)
+        if not p.is_file():
+            return {}
+        rows = []
+        with open(p, newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("exp_id") == exp_id and row.get("group") == "main":
+                    rows.append(row)
+        if not rows:
+            return {}
+        # Group by metric, compute mean value across seeds
+        by_metric: dict[str, list[float]] = {}
+        for row in rows:
+            metric = row.get("metric", "value")
+            try:
+                val = float(row["value"])
+                by_metric.setdefault(metric, []).append(val)
+            except (KeyError, ValueError):
+                pass
+        return {m: round(statistics.mean(vals), 4) for m, vals in by_metric.items()}
+    except Exception:
+        return {}
+
+
 def _get_exp_table(project_dir: Path, table_type: str) -> dict:
     """Load experiment design table merged with dispatch state."""
     # Build lookup from dispatch state
@@ -469,15 +504,26 @@ def _get_exp_table(project_dir: Path, table_type: str) -> dict:
                     cell["status"] = d["status"]
                 elif "status" not in cell:
                     cell["status"] = "todo"
+                # Results: prefer dispatch field; fallback to reading the CSV directly
                 results = d.get("results") or d.get("metrics") or {}
-                if results:  # only overwrite if dispatch has actual results
+                if not results and d.get("status") == "done" and d.get("result_file"):
+                    results = _read_result_csv(d["result_file"], exp_id)
+                if results:
                     cell["results"] = results
-                if d.get("wandb_url"):
-                    cell["wandb_url"] = d["wandb_url"]
+                if d.get("wandb_url") or d.get("wandb_run_id"):
+                    cell["wandb_url"] = d.get("wandb_url") or d.get("wandb_run_id")
+                if d.get("hf_artifact_url"):
+                    cell["hf_artifact_url"] = d["hf_artifact_url"]
                 if d.get("host"):
                     cell["host"] = d["host"]
                 if d.get("started"):
                     cell["started"] = d["started"]
+                if d.get("finished"):
+                    cell["finished"] = d["finished"]
+                if d.get("retry_count") is not None:
+                    cell["retry_count"] = d["retry_count"]
+                if d.get("notes"):
+                    cell["notes"] = d["notes"]
             elif "status" not in cell:
                 cell["status"] = "todo"
         design["found"] = True
